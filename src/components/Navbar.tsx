@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { RefreshCw, Clock, FileSpreadsheet } from 'lucide-react';
 
 interface NavbarProps {
   isSyncing: boolean;
   onManualRefresh: () => void;
   lastSyncTime: Date | null;
-  nextSyncSeconds: number;
+  syncIntervalSeconds: number;
   autoSyncEnabled: boolean;
   isDemoMode: boolean;
   onToggleDemoMode: () => void;
@@ -13,17 +13,34 @@ interface NavbarProps {
   sheetName: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({
+export const Navbar: React.FC<NavbarProps> = React.memo(({
   isSyncing,
   onManualRefresh,
   lastSyncTime,
-  nextSyncSeconds,
+  syncIntervalSeconds,
   autoSyncEnabled,
   isDemoMode,
   onToggleDemoMode,
   spreadsheetId,
   sheetName,
 }) => {
+  // Localized countdown ticker so parent App component does not re-render every second
+  const [countdown, setCountdown] = useState<number>(syncIntervalSeconds);
+
+  useEffect(() => {
+    setCountdown(syncIntervalSeconds);
+  }, [syncIntervalSeconds, lastSyncTime]);
+
+  useEffect(() => {
+    if (!autoSyncEnabled || isDemoMode) return;
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? syncIntervalSeconds : prev - 1));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [autoSyncEnabled, isDemoMode, syncIntervalSeconds]);
+
   const formatTime = (d: Date | null) => {
     if (!d) return 'Belum pernah';
     return d.toLocaleTimeString('id-ID', {
@@ -39,26 +56,26 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center justify-between h-16">
           {/* Brand */}
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-md shadow-blue-500/20">
-              <FileSpreadsheet className="w-6 h-6" />
+            <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-xs">
+              <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-semibold text-base sm:text-lg tracking-tight text-slate-100">
+                <span className="font-semibold text-sm sm:text-base tracking-tight text-slate-100">
                   PPIC Material Readiness &amp; Risk
                 </span>
                 {isDemoMode ? (
-                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2 py-0.5 rounded font-mono font-medium">
+                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] px-1.5 py-0.5 rounded font-mono font-medium">
                     DEMO DATA
                   </span>
                 ) : (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs px-2 py-0.5 rounded font-mono font-medium flex items-center gap-1">
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] px-1.5 py-0.5 rounded font-mono font-medium flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     LIVE SHEETS
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-400 hidden sm:block">
                 {isDemoMode
                   ? 'Simulasi Garment PPIC Rekap Sheet'
                   : spreadsheetId
@@ -76,9 +93,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
                 <span>Update: {formatTime(lastSyncTime)}</span>
               </div>
-              {autoSyncEnabled && (
-                <span className="text-[11px] text-slate-400">
-                  Auto-sync: {nextSyncSeconds}s
+              {autoSyncEnabled && !isDemoMode && (
+                <span className="text-[10px] text-slate-400">
+                  Auto-sync: {countdown}s
                 </span>
               )}
             </div>
@@ -110,4 +127,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
     </header>
   );
-};
+});
+
+Navbar.displayName = 'Navbar';

@@ -65,13 +65,24 @@ export async function fetchSheetViaGViz(
   const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}`;
 
   let response: Response;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
   try {
-    response = await fetch(url);
-  } catch (err: unknown) {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new SheetsApiError(
+        'Koneksi ke Google Sheets timed out (melewati 8 detik). Periksa kembali link spreadsheet atau koneksi internet.',
+        'TIMEOUT'
+      );
+    }
     throw new SheetsApiError(
       'Gagal menghubungi server Google Sheets. Periksa koneksi internet Anda.',
       'NETWORK_ERROR'
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {

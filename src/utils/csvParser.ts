@@ -1,58 +1,80 @@
 /**
- * Robust RFC-4180 compliant CSV parser for Google Sheets GViz CSV export.
- * Handles multiline quoted strings, escaped quotes, commas, and carriage returns.
+ * High-performance slice-based RFC-4180 compliant CSV parser.
+ * Avoids per-character string allocations and memory thrashing.
  */
 
 export function parseCsv(text: string): string[][] {
-  const p: string[][] = [];
-  let row: string[] = [''];
+  const rows: string[][] = [];
+  const len = text.length;
+  if (len === 0) return rows;
+
+  let currentRow: string[] = [];
   let inQuotes = false;
-  let i = 0;
+  let fieldStart = 0;
+  let hasQuotes = false;
 
-  while (i < text.length) {
-    const c = text[i];
-    const next = text[i + 1];
+  for (let i = 0; i < len; i++) {
+    const c = text.charCodeAt(i);
 
-    if (c === '"') {
-      if (inQuotes && next === '"') {
-        // Escaped double quote ("")
-        row[row.length - 1] += '"';
-        i += 2;
-        continue;
-      }
+    if (c === 34) {
+      // Quote char '"'
       inQuotes = !inQuotes;
-      i++;
-      continue;
-    }
+      hasQuotes = true;
+    } else if (!inQuotes) {
+      if (c === 44) {
+        // Comma ','
+        let field = text.slice(fieldStart, i);
+        if (hasQuotes) {
+          field = field.trim();
+          if (field.startsWith('"') && field.endsWith('"')) {
+            field = field.slice(1, -1).replace(/""/g, '"');
+          }
+        }
+        currentRow.push(field);
+        fieldStart = i + 1;
+        hasQuotes = false;
+      } else if (c === 10 || c === 13) {
+        // Line break '\n' or '\r'
+        let field = text.slice(fieldStart, i);
+        if (hasQuotes) {
+          field = field.trim();
+          if (field.startsWith('"') && field.endsWith('"')) {
+            field = field.slice(1, -1).replace(/""/g, '"');
+          }
+        }
+        currentRow.push(field);
+        fieldStart = i + 1;
+        hasQuotes = false;
 
-    if (c === ',' && !inQuotes) {
-      row.push('');
-      i++;
-      continue;
-    }
+        // Skip \r\n sequence
+        if (c === 13 && i + 1 < len && text.charCodeAt(i + 1) === 10) {
+          i++;
+          fieldStart = i + 1;
+        }
 
-    if ((c === '\r' || c === '\n') && !inQuotes) {
-      if (c === '\r' && next === '\n') {
-        i += 2;
-      } else {
-        i++;
+        // Only add non-empty rows
+        if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
       }
-      // Finish row (only if not an empty trailing line)
-      if (row.length > 1 || row[0] !== '') {
-        p.push(row);
-      }
-      row = [''];
-      continue;
     }
-
-    row[row.length - 1] += c;
-    i++;
   }
 
-  // Push last row if exists
-  if (row.length > 1 || row[0] !== '') {
-    p.push(row);
+  // Handle final field if text doesn't end with newline
+  if (fieldStart < len || currentRow.length > 0) {
+    let field = text.slice(fieldStart);
+    if (hasQuotes) {
+      field = field.trim();
+      if (field.startsWith('"') && field.endsWith('"')) {
+        field = field.slice(1, -1).replace(/""/g, '"');
+      }
+    }
+    currentRow.push(field);
+    if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+      rows.push(currentRow);
+    }
   }
 
-  return p;
+  return rows;
 }

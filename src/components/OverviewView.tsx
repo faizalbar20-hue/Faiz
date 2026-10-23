@@ -33,13 +33,25 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrFilter, setSelectedOrFilter] = useState<string>('ALL');
 
-  // Extract unique OR numbers for quick filtering
-  const uniqueOrs = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((item) => {
-      if (item.orNumber && item.orNumber !== '-') set.add(item.orNumber);
-    });
-    return Array.from(set).sort();
+  // Precompute OR stats in O(N) single-pass to prevent CPU spikes
+  const { uniqueOrs, orStatsMap } = useMemo(() => {
+    const map = new Map<string, { count: number; hasNotReady: boolean }>();
+    for (const item of items) {
+      if (!item.orNumber || item.orNumber === '-') continue;
+      let entry = map.get(item.orNumber);
+      if (!entry) {
+        entry = { count: 0, hasNotReady: false };
+        map.set(item.orNumber, entry);
+      }
+      entry.count += 1;
+      if (item.readinessStatus === 'NOT READY') {
+        entry.hasNotReady = true;
+      }
+    }
+    return {
+      uniqueOrs: Array.from(map.keys()).sort(),
+      orStatsMap: map,
+    };
   }, [items]);
 
   // Filter items by search term (OR or Style) or selected OR chip
@@ -159,8 +171,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               Semua OR ({items.length})
             </button>
             {uniqueOrs.map((or) => {
-              const count = items.filter((i) => i.orNumber === or).length;
-              const hasNotReady = items.some((i) => i.orNumber === or && i.readinessStatus === 'NOT READY');
+              const stat = orStatsMap.get(or) || { count: 0, hasNotReady: false };
               return (
                 <button
                   key={or}
@@ -168,13 +179,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                   className={`px-2.5 py-1 rounded-md text-xs font-medium transition shrink-0 flex items-center space-x-1 border ${
                     selectedOrFilter === or
                       ? 'bg-blue-600 text-white border-blue-600'
-                      : hasNotReady
+                      : stat.hasNotReady
                       ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
                   <span>{or}</span>
-                  <span className="text-[10px] opacity-75">({count})</span>
+                  <span className="text-[10px] opacity-75">({stat.count})</span>
                 </button>
               );
             })}

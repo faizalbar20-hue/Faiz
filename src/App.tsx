@@ -1,10 +1,11 @@
 /**
  * Material Readiness & Risk Monitoring Dashboard (PPIC)
  * Single Source of Truth: Google Sheets (Sheet "Rekap")
+ * Performance Optimized: Zero-tick root renders, memoized KPIs, fast FCP.
  * @license Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchLiveSheetData, SheetsApiError, extractSpreadsheetId } from './services/sheetsService';
 import { getDemoMaterialItems } from './data/demoPpicData';
 import {
@@ -27,6 +28,8 @@ import {
   AlertTriangle,
   Link2,
   FileSpreadsheet,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -77,8 +80,10 @@ export default function App() {
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
-  const [nextSyncSeconds, setNextSyncSeconds] = useState<number>(settings.syncIntervalSeconds);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
+
+  // Non-blocking toast notification
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Quick connect input for real mode
   const [quickSheetUrl, setQuickSheetUrl] = useState<string>('');
@@ -86,17 +91,29 @@ export default function App() {
   // Modal inspection
   const [selectedMaterial, setSelectedMaterial] = useState<ParsedMaterialItem | null>(null);
 
-  const updateSettings = (newSettings: AppSettings) => {
+  // Guard against concurrent fetch calls
+  const isSyncingRef = useRef(false);
+
+  const showToast = useCallback((text: string, type: 'success' | 'error') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  }, []);
+
+  const updateSettings = useCallback((newSettings: AppSettings) => {
     setSettings(newSettings);
     try {
       localStorage.setItem('ppic_dashboard_settings', JSON.stringify(newSettings));
     } catch (e) {
       console.warn('Failed to persist settings', e);
     }
-  };
+  }, []);
 
   // Main Data Synchronization Routine
   const syncData = useCallback(async () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
     const startTime = Date.now();
     setIsSyncing(true);
     setLastError(null);
@@ -107,18 +124,18 @@ export default function App() {
       setItems(demoItems);
       setLastSyncTime(new Date());
       setIsSyncing(false);
-      setNextSyncSeconds(settings.syncIntervalSeconds);
+      isSyncingRef.current = false;
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
         timestamp: new Date(),
         status: 'SUCCESS',
         rowCount: demoItems.length,
-        message: `Simulasi DEMO berhasil (${demoItems.length} baris material dimuat).`,
+        message: `Simulasi DEMO dimuat (${demoItems.length} baris material).`,
         durationMs: Date.now() - startTime,
         source: 'DEMO_DATA',
       };
-      setSyncLogs((prev) => [log, ...prev.slice(0, 24)]);
+      setSyncLogs((prev) => [log, ...prev.slice(0, 19)]);
       return;
     }
 
@@ -126,6 +143,7 @@ export default function App() {
     const cleanId = extractSpreadsheetId(settings.spreadsheetId);
     if (!cleanId && !settings.appsScriptUrl) {
       setIsSyncing(false);
+      isSyncingRef.current = false;
       setItems([]);
       setLastError(
         'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk membaca data.'
@@ -153,11 +171,11 @@ export default function App() {
         timestamp: new Date(),
         status: 'SUCCESS',
         rowCount: result.items.length,
-        message: `Sinkronisasi Google Sheets '${result.activeSheetName}' sukses (${result.items.length} baris diproses via ${result.sourceType}).`,
+        message: `Sinkronisasi Google Sheets '${result.activeSheetName}' sukses (${result.items.length} baris diproses).`,
         durationMs: Date.now() - startTime,
         source: 'GOOGLE_SHEETS',
       };
-      setSyncLogs((prev) => [log, ...prev.slice(0, 24)]);
+      setSyncLogs((prev) => [log, ...prev.slice(0, 19)]);
     } catch (err: unknown) {
       const errMsg =
         err instanceof SheetsApiError
@@ -177,10 +195,10 @@ export default function App() {
         durationMs: Date.now() - startTime,
         source: 'GOOGLE_SHEETS',
       };
-      setSyncLogs((prev) => [log, ...prev.slice(0, 24)]);
+      setSyncLogs((prev) => [log, ...prev.slice(0, 19)]);
     } finally {
       setIsSyncing(false);
-      setNextSyncSeconds(settings.syncIntervalSeconds);
+      isSyncingRef.current = false;
     }
   }, [
     settings.useDemoData,
@@ -189,7 +207,6 @@ export default function App() {
     settings.appsScriptUrl,
     settings.riskWeights,
     settings.columnMapping,
-    settings.syncIntervalSeconds,
   ]);
 
   // Initial load
@@ -197,37 +214,30 @@ export default function App() {
     syncData();
   }, [syncData]);
 
-  // Auto-sync countdown timer
+  // Auto-sync interval: runs quietly at specified frequency without 1-second React re-renders!
   useEffect(() => {
     if (!settings.autoSyncEnabled || settings.useDemoData) return;
 
-    const interval = setInterval(() => {
-      setNextSyncSeconds((prev) => {
-        if (prev <= 1) {
-          syncData();
-          return settings.syncIntervalSeconds;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    const intervalMs = Math.max(10, settings.syncIntervalSeconds) * 1000;
+    const timer = setInterval(() => {
+      syncData();
+    }, intervalMs);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(timer);
   }, [settings.autoSyncEnabled, settings.useDemoData, settings.syncIntervalSeconds, syncData]);
 
-  const handleToggleDemoMode = () => {
+  const handleToggleDemoMode = useCallback(() => {
     const nextVal = !settings.useDemoData;
     const newSettings = { ...settings, useDemoData: nextVal };
     updateSettings(newSettings);
-    if (!nextVal) {
-      if (!newSettings.spreadsheetId) {
-        setItems([]);
-        setActiveTab('settings');
-      }
+    if (!nextVal && !newSettings.spreadsheetId) {
+      setItems([]);
+      setActiveTab('settings');
     }
-  };
+  }, [settings, updateSettings]);
 
   // Quick connect handler
-  const handleQuickConnect = (e: React.FormEvent) => {
+  const handleQuickConnect = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!quickSheetUrl.trim()) return;
     const cleanId = extractSpreadsheetId(quickSheetUrl);
@@ -237,10 +247,11 @@ export default function App() {
       useDemoData: false,
     };
     updateSettings(newSettings);
-  };
+    showToast('Menghubungkan ke Google Sheets...', 'success');
+  }, [quickSheetUrl, settings, updateSettings, showToast]);
 
   // Test connection button in settings
-  const handleTestConnection = async (testId: string, testSheet: string) => {
+  const handleTestConnection = useCallback(async (testId: string, testSheet: string) => {
     setIsTestingConnection(true);
     setLastError(null);
     try {
@@ -253,26 +264,45 @@ export default function App() {
       });
       setItems(res.items);
       setLastSyncTime(new Date());
-      alert(`Koneksi Berhasil! Terbaca ${res.items.length} baris material dari sheet '${res.activeSheetName}'.`);
+      showToast(`Koneksi Berhasil! Terbaca ${res.items.length} baris material dari sheet '${res.activeSheetName}'.`, 'success');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Koneksi gagal.';
       setLastError(msg);
-      alert(`Koneksi Gagal: ${msg}`);
+      showToast(`Koneksi Gagal: ${msg}`, 'error');
     } finally {
       setIsTestingConnection(false);
     }
-  };
+  }, [settings.appsScriptUrl, settings.riskWeights, settings.columnMapping, showToast]);
 
-  const kpi: PpicDashboardKpi = calculateDashboardKpi(items);
+  // Memoized KPI calculation: Only runs when items array actually changes!
+  const kpi: PpicDashboardKpi = useMemo(() => calculateDashboardKpi(items), [items]);
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl shadow-lg border text-xs font-semibold animate-fade-in transition bg-white border-slate-200 text-slate-800">
+          {toastMessage.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+          )}
+          <span>{toastMessage.text}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="p-1 hover:bg-slate-100 rounded text-slate-400"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <Navbar
         isSyncing={isSyncing}
         onManualRefresh={syncData}
         lastSyncTime={lastSyncTime}
-        nextSyncSeconds={nextSyncSeconds}
+        syncIntervalSeconds={settings.syncIntervalSeconds}
         autoSyncEnabled={settings.autoSyncEnabled}
         isDemoMode={settings.useDemoData}
         onToggleDemoMode={handleToggleDemoMode}
@@ -336,7 +366,7 @@ export default function App() {
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
                   Tempelkan tautan (link) Google Sheets Anda yang memiliki sheet bernama <strong>Rekap</strong>.
-                  Data akan langsung disinkronkan ke dashboard tanpa perlu login.
+                  Data akan langsung disinkronkan ke dashboard secara cepat dan ringan.
                 </p>
 
                 {lastError && (
