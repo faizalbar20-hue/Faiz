@@ -41,30 +41,32 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
   const riskyItems = useMemo(() => {
     return items
       .filter((item) => {
+        if (!item) return false;
+
         // OR dropdown filter
         if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
           return false;
         }
 
         // Search term in OR, Style, code, or name
-        if (searchTerm.trim()) {
+        if (searchTerm && searchTerm.trim()) {
           const q = searchTerm.toLowerCase().trim();
           const match =
-            item.orNumber.toLowerCase().includes(q) ||
-            item.style.toLowerCase().includes(q) ||
-            item.materialCode.toLowerCase().includes(q) ||
-            item.materialName.toLowerCase().includes(q);
+            String(item.orNumber || '').toLowerCase().includes(q) ||
+            String(item.style || '').toLowerCase().includes(q) ||
+            String(item.materialCode || '').toLowerCase().includes(q) ||
+            String(item.materialName || '').toLowerCase().includes(q);
           if (!match) return false;
         }
 
         // Tab filters
         if (selectedRiskTab !== 'ALL' && item.riskLevel !== selectedRiskTab) return false;
-        if (selectedCategory === 'SHORTAGE' && item.calculatedShortage <= 0) return false;
+        if (selectedCategory === 'SHORTAGE' && (item.calculatedShortage || 0) <= 0) return false;
         if (selectedCategory === 'STALE' && !item.isStale) return false;
 
         return true;
       })
-      .sort((a, b) => b.compositeRiskScore - a.compositeRiskScore);
+      .sort((a, b) => (b.compositeRiskScore || 0) - (a.compositeRiskScore || 0));
   }, [items, searchTerm, selectedOrFilter, selectedRiskTab, selectedCategory]);
 
   const counts = useMemo(() => {

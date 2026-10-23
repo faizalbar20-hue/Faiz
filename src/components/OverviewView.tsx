@@ -57,16 +57,17 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   // Filter items by search term (OR or Style) or selected OR chip
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      if (!item) return false;
       if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
         return false;
       }
-      if (searchTerm.trim()) {
+      if (searchTerm && searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
         const match =
-          item.orNumber.toLowerCase().includes(q) ||
-          item.style.toLowerCase().includes(q) ||
-          item.materialCode.toLowerCase().includes(q) ||
-          item.materialName.toLowerCase().includes(q);
+          String(item.orNumber || '').toLowerCase().includes(q) ||
+          String(item.style || '').toLowerCase().includes(q) ||
+          String(item.materialCode || '').toLowerCase().includes(q) ||
+          String(item.materialName || '').toLowerCase().includes(q);
         if (!match) return false;
       }
       return true;
@@ -82,16 +83,16 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   }, [isFiltered, filteredItems, globalKpi]);
 
   // Donut geometry for active KPI
-  const total = activeKpi.totalRows || 1;
-  const readyPct = (activeKpi.readyRows / total) * 100;
-  const notReadyPct = (activeKpi.notReadyRows / total) * 100;
-  const checkDataPct = (activeKpi.checkDataRows / total) * 100;
+  const total = Math.max(1, activeKpi.totalRows || 0);
+  const readyPct = Math.max(0, Math.min(100, ((activeKpi.readyRows || 0) / total) * 100));
+  const notReadyPct = Math.max(0, Math.min(100, ((activeKpi.notReadyRows || 0) / total) * 100));
+  const checkDataPct = Math.max(0, Math.min(100, ((activeKpi.checkDataRows || 0) / total) * 100));
 
   const radius = 70;
   const circumference = 2 * Math.PI * radius;
-  const readyStroke = (readyPct / 100) * circumference;
-  const notReadyStroke = (notReadyPct / 100) * circumference;
-  const checkDataStroke = (checkDataPct / 100) * circumference;
+  const readyStroke = Math.max(0, Math.min(circumference, (readyPct / 100) * circumference)) || 0;
+  const notReadyStroke = Math.max(0, Math.min(circumference, (notReadyPct / 100) * circumference)) || 0;
+  const checkDataStroke = Math.max(0, Math.min(circumference, (checkDataPct / 100) * circumference)) || 0;
 
   // Top Critical Materials for active items
   const urgentItems = useMemo(() => {

@@ -32,6 +32,8 @@ import {
   X,
 } from 'lucide-react';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
+
 const DEFAULT_SETTINGS: AppSettings = {
   spreadsheetId: '',
   sheetName: 'Rekap',
@@ -63,7 +65,23 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem('ppic_dashboard_settings');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...DEFAULT_SETTINGS,
+            ...parsed,
+            riskWeights: {
+              ...DEFAULT_SETTINGS.riskWeights,
+              ...(parsed.riskWeights || {}),
+            },
+            columnMapping: {
+              ...DEFAULT_SETTINGS.columnMapping,
+              ...(parsed.columnMapping || {}),
+            },
+          };
+        }
+      }
     } catch (e) {
       console.warn('Failed to load settings from localStorage', e);
     }
@@ -428,63 +446,73 @@ export default function App() {
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} kpi={kpi} />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0">
-          {activeTab === 'overview' && (
-            <OverviewView
-              kpi={kpi}
-              items={items}
-              staleThresholdDays={settings.staleThresholdDays}
-              onNavigateToTab={(tab) => setActiveTab(tab)}
-              onSelectMaterial={setSelectedMaterial}
-            />
-          )}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Ringkasan Overview">
+            {activeTab === 'overview' && (
+              <OverviewView
+                kpi={kpi}
+                items={items}
+                staleThresholdDays={settings.staleThresholdDays}
+                onNavigateToTab={(tab) => setActiveTab(tab)}
+                onSelectMaterial={setSelectedMaterial}
+              />
+            )}
+          </ErrorBoundary>
 
-          {activeTab === 'readiness' && (
-            <ReadinessView
-              items={items}
-              staleThresholdDays={settings.staleThresholdDays}
-              onSelectMaterial={setSelectedMaterial}
-            />
-          )}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Tabel Material Readiness">
+            {activeTab === 'readiness' && (
+              <ReadinessView
+                items={items}
+                staleThresholdDays={settings.staleThresholdDays}
+                onSelectMaterial={setSelectedMaterial}
+              />
+            )}
+          </ErrorBoundary>
 
-          {activeTab === 'risk' && (
-            <RiskAnalysisView
-              items={items}
-              riskWeights={settings.riskWeights}
-              onSelectMaterial={setSelectedMaterial}
-            />
-          )}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Risk Analysis">
+            {activeTab === 'risk' && (
+              <RiskAnalysisView
+                items={items}
+                riskWeights={settings.riskWeights}
+                onSelectMaterial={setSelectedMaterial}
+              />
+            )}
+          </ErrorBoundary>
 
-          {activeTab === 'sync' && (
-            <SyncStatusView
-              spreadsheetId={settings.spreadsheetId}
-              sheetName={settings.sheetName}
-              isSyncing={isSyncing}
-              lastSyncTime={lastSyncTime}
-              lastError={lastError}
-              syncLogs={syncLogs}
-              items={items}
-              onManualRefresh={syncData}
-              isDemoMode={settings.useDemoData}
-              detectedHeaders={detectedHeaders}
-            />
-          )}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Status Sinkronisasi">
+            {activeTab === 'sync' && (
+              <SyncStatusView
+                spreadsheetId={settings.spreadsheetId}
+                sheetName={settings.sheetName}
+                isSyncing={isSyncing}
+                lastSyncTime={lastSyncTime}
+                lastError={lastError}
+                syncLogs={syncLogs}
+                items={items}
+                onManualRefresh={syncData}
+                isDemoMode={settings.useDemoData}
+                detectedHeaders={detectedHeaders}
+              />
+            )}
+          </ErrorBoundary>
 
-          {activeTab === 'settings' && (
-            <SettingsView
-              settings={settings}
-              onSaveSettings={(newSettings) => {
-                updateSettings(newSettings);
-                syncData();
-              }}
-              onResetDefaults={() => {
-                updateSettings(DEFAULT_SETTINGS);
-                syncData();
-              }}
-              availableSheets={availableSheets}
-              onTestConnection={handleTestConnection}
-              isTestingConnection={isTestingConnection}
-            />
-          )}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Pengaturan">
+            {activeTab === 'settings' && (
+              <SettingsView
+                settings={settings}
+                onSaveSettings={(newSettings) => {
+                  updateSettings(newSettings);
+                  syncData();
+                }}
+                onResetDefaults={() => {
+                  updateSettings(DEFAULT_SETTINGS);
+                  syncData();
+                }}
+                availableSheets={availableSheets}
+                onTestConnection={handleTestConnection}
+                isTestingConnection={isTestingConnection}
+              />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 

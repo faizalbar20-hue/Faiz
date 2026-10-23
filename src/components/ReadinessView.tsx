@@ -64,25 +64,39 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
   const filteredItems = useMemo(() => {
     return items
       .filter((item) => {
+        if (!item) return false;
+
         // Search term in code, name, OR, or Style
-        if (searchTerm) {
-          const q = searchTerm.toLowerCase();
+        if (searchTerm && searchTerm.trim()) {
+          const q = searchTerm.toLowerCase().trim();
           const match =
-            item.materialCode.toLowerCase().includes(q) ||
-            item.materialName.toLowerCase().includes(q) ||
-            item.orNumber.toLowerCase().includes(q) ||
-            item.style.toLowerCase().includes(q);
+            String(item.materialCode || '').toLowerCase().includes(q) ||
+            String(item.materialName || '').toLowerCase().includes(q) ||
+            String(item.orNumber || '').toLowerCase().includes(q) ||
+            String(item.style || '').toLowerCase().includes(q);
           if (!match) return false;
         }
 
         // Tanggal Update Search
-        if (dateSearchTerm.trim()) {
+        if (dateSearchTerm && dateSearchTerm.trim()) {
           const dq = dateSearchTerm.toLowerCase().trim();
-          const matchDate =
-            item.updateDateFormatted.toLowerCase().includes(dq) ||
-            (item.dataAgeDays !== null && `${item.dataAgeDays} hari`.includes(dq)) ||
-            (item.updateDate ? item.updateDate.toISOString().toLowerCase().includes(dq) : false);
-          if (!matchDate) return false;
+          const matchDateFormatted = String(item.updateDateFormatted || '').toLowerCase().includes(dq);
+          const matchAge =
+            item.dataAgeDays !== null &&
+            item.dataAgeDays !== undefined &&
+            !isNaN(item.dataAgeDays) &&
+            `${item.dataAgeDays} hari`.toLowerCase().includes(dq);
+          
+          let matchIso = false;
+          if (item.updateDate instanceof Date && !isNaN(item.updateDate.getTime())) {
+            try {
+              matchIso = item.updateDate.toISOString().toLowerCase().includes(dq);
+            } catch {
+              matchIso = false;
+            }
+          }
+
+          if (!matchDateFormatted && !matchAge && !matchIso) return false;
         }
 
         // Status Filter
@@ -103,21 +117,25 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         return true;
       })
       .sort((a, b) => {
-        let valA: any = a[sortField];
-        let valB: any = b[sortField];
+        let valA: unknown = a[sortField];
+        let valB: unknown = b[sortField];
 
         if (sortField === 'dataAgeDays') {
-          valA = a.dataAgeDays ?? -1;
-          valB = b.dataAgeDays ?? -1;
+          valA = typeof a.dataAgeDays === 'number' && !isNaN(a.dataAgeDays) ? a.dataAgeDays : -1;
+          valB = typeof b.dataAgeDays === 'number' && !isNaN(b.dataAgeDays) ? b.dataAgeDays : -1;
         }
 
-        if (typeof valA === 'string') {
+        if (typeof valA === 'string' || typeof valB === 'string') {
+          const strA = String(valA ?? '');
+          const strB = String(valB ?? '');
           return sortDirection === 'asc'
-            ? valA.localeCompare(valB)
-            : valB.localeCompare(valA);
+            ? strA.localeCompare(strB)
+            : strB.localeCompare(strA);
         }
 
-        return sortDirection === 'asc' ? valA - valB : valB - valA;
+        const numA = typeof valA === 'number' && !isNaN(valA) ? valA : 0;
+        const numB = typeof valB === 'number' && !isNaN(valB) ? valB : 0;
+        return sortDirection === 'asc' ? numA - numB : numB - numA;
       });
   }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, onlyStale, sortField, sortDirection]);
 
