@@ -5,14 +5,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { User } from 'firebase/auth';
-import {
-  initAuth,
-  googleSignIn,
-  googleSignOut,
-  getCachedAccessToken,
-  setCachedAccessToken,
-} from './services/googleAuth';
 import { fetchLiveSheetData, SheetsApiError, extractSpreadsheetId } from './services/sheetsService';
 import { getDemoMaterialItems } from './data/demoPpicData';
 import {
@@ -33,12 +25,7 @@ import { SettingsView } from './components/SettingsView';
 import { MaterialDetailModal } from './components/MaterialDetailModal';
 import {
   AlertTriangle,
-  Database,
-  Info,
   Link2,
-  CheckCircle2,
-  RefreshCw,
-  ExternalLink,
   FileSpreadsheet,
 } from 'lucide-react';
 
@@ -81,9 +68,6 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
 
   // Sync and Data state
   const [items, setItems] = useState<ParsedMaterialItem[]>([]);
@@ -110,22 +94,6 @@ export default function App() {
       console.warn('Failed to persist settings', e);
     }
   };
-
-  // Auth initialization
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, token) => {
-        setCurrentUser(user);
-        setAccessToken(token);
-        setCachedAccessToken(token);
-      },
-      () => {
-        setCurrentUser(null);
-        setAccessToken(null);
-      }
-    );
-    return () => unsubscribe();
-  }, []);
 
   // Main Data Synchronization Routine
   const syncData = useCallback(async () => {
@@ -158,10 +126,9 @@ export default function App() {
     const cleanId = extractSpreadsheetId(settings.spreadsheetId);
     if (!cleanId && !settings.appsScriptUrl) {
       setIsSyncing(false);
-      // Clear demo items so user does not see unchanged data
       setItems([]);
       setLastError(
-        'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk memulai membaca data nyata.'
+        'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk membaca data.'
       );
       return;
     }
@@ -171,7 +138,6 @@ export default function App() {
         spreadsheetId: cleanId,
         sheetName: settings.sheetName || 'Rekap',
         appsScriptUrl: settings.appsScriptUrl,
-        accessToken: accessToken || getCachedAccessToken(),
         weights: settings.riskWeights,
         customMapping: settings.columnMapping,
       });
@@ -201,7 +167,6 @@ export default function App() {
           : 'Gagal menyinkronkan data Google Sheets';
 
       setLastError(errMsg);
-      // Clear items so old demo data doesn't fool user
       setItems([]);
 
       const log: SyncLogEntry = {
@@ -225,7 +190,6 @@ export default function App() {
     settings.riskWeights,
     settings.columnMapping,
     settings.syncIntervalSeconds,
-    accessToken,
   ]);
 
   // Initial load
@@ -249,33 +213,6 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [settings.autoSyncEnabled, settings.useDemoData, settings.syncIntervalSeconds, syncData]);
-
-  // Handle Google Sign In
-  const handleSignIn = async () => {
-    setIsAuthenticating(true);
-    setLastError(null);
-    try {
-      const res = await googleSignIn();
-      setCurrentUser(res.user);
-      setAccessToken(res.accessToken);
-      // Retrigger sync
-      syncData();
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Login Google dibatalkan atau diblokir oleh browser.';
-      setLastError(msg);
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    await googleSignOut();
-    setCurrentUser(null);
-    setAccessToken(null);
-  };
 
   const handleToggleDemoMode = () => {
     const nextVal = !settings.useDemoData;
@@ -311,7 +248,6 @@ export default function App() {
         spreadsheetId: extractSpreadsheetId(testId),
         sheetName: testSheet || 'Rekap',
         appsScriptUrl: settings.appsScriptUrl,
-        accessToken,
         weights: settings.riskWeights,
         customMapping: settings.columnMapping,
       });
@@ -333,10 +269,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
       {/* Top Navbar */}
       <Navbar
-        currentUser={currentUser}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-        isAuthenticating={isAuthenticating}
         isSyncing={isSyncing}
         onManualRefresh={syncData}
         lastSyncTime={lastSyncTime}
@@ -404,7 +336,7 @@ export default function App() {
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
                   Tempelkan tautan (link) Google Sheets Anda yang memiliki sheet bernama <strong>Rekap</strong>.
-                  Data akan langsung disinkronkan ke dashboard tanpa perlu konfigurasi rumit.
+                  Data akan langsung disinkronkan ke dashboard tanpa perlu login.
                 </p>
 
                 {lastError && (
@@ -494,7 +426,6 @@ export default function App() {
 
           {activeTab === 'sync' && (
             <SyncStatusView
-              currentUser={currentUser}
               spreadsheetId={settings.spreadsheetId}
               sheetName={settings.sheetName}
               isSyncing={isSyncing}
@@ -504,7 +435,6 @@ export default function App() {
               items={items}
               onManualRefresh={syncData}
               isDemoMode={settings.useDemoData}
-              onSignIn={handleSignIn}
               detectedHeaders={detectedHeaders}
             />
           )}

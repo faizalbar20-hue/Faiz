@@ -1,18 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import {
   ShieldAlert,
-  AlertOctagon,
-  Clock,
   CalendarX2,
   CheckCircle2,
   Info,
   ChevronRight,
-  Filter,
-  Layers,
+  Search,
+  RotateCcw,
+  Tag,
   ArrowUpRight,
-  HelpCircle,
 } from 'lucide-react';
-import { ParsedMaterialItem, RiskLevel, RiskWeightsConfig } from '../types/ppic';
+import { ParsedMaterialItem, RiskWeightsConfig } from '../types/ppic';
 
 interface RiskAnalysisViewProps {
   items: ParsedMaterialItem[];
@@ -25,20 +23,49 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
   riskWeights,
   onSelectMaterial,
 }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedOrFilter, setSelectedOrFilter] = useState<string>('ALL');
   const [selectedRiskTab, setSelectedRiskTab] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | 'SHORTAGE' | 'STALE' | 'DELIVERY'>('ALL');
+
+  // Extract unique OR numbers for quick filtering
+  const uniqueOrs = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((item) => {
+      if (item.orNumber && item.orNumber !== '-') set.add(item.orNumber);
+    });
+    return Array.from(set).sort();
+  }, [items]);
 
   // Filter items
   const riskyItems = useMemo(() => {
     return items
       .filter((item) => {
+        // OR dropdown filter
+        if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
+          return false;
+        }
+
+        // Search term in OR, Style, code, or name
+        if (searchTerm.trim()) {
+          const q = searchTerm.toLowerCase().trim();
+          const match =
+            item.orNumber.toLowerCase().includes(q) ||
+            item.style.toLowerCase().includes(q) ||
+            item.materialCode.toLowerCase().includes(q) ||
+            item.materialName.toLowerCase().includes(q);
+          if (!match) return false;
+        }
+
+        // Tab filters
         if (selectedRiskTab !== 'ALL' && item.riskLevel !== selectedRiskTab) return false;
         if (selectedCategory === 'SHORTAGE' && item.calculatedShortage <= 0) return false;
         if (selectedCategory === 'STALE' && !item.isStale) return false;
+
         return true;
       })
       .sort((a, b) => b.compositeRiskScore - a.compositeRiskScore);
-  }, [items, selectedRiskTab, selectedCategory]);
+  }, [items, searchTerm, selectedOrFilter, selectedRiskTab, selectedCategory]);
 
   const counts = useMemo(() => {
     return {
@@ -50,6 +77,13 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
       stale: items.filter((i) => i.isStale).length,
     };
   }, [items]);
+
+  const isFiltered = Boolean(searchTerm.trim() || selectedOrFilter !== 'ALL');
+
+  const resetSearch = () => {
+    setSearchTerm('');
+    setSelectedOrFilter('ALL');
+  };
 
   return (
     <div className="space-y-6">
@@ -79,7 +113,59 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
         </div>
       </div>
 
-      {/* 3 Dedicated Risk Category Banners (MANDATORY SEPARATION) */}
+      {/* NEW: Dedicated Search and OR Filter for Risk Analysis */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Cari OR, Style, atau nama material berisiko (misal: OR 1095, KS-882)..."
+              className="w-full pl-9 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+            />
+          </div>
+
+          <div className="w-full sm:w-48">
+            <select
+              value={selectedOrFilter}
+              onChange={(e) => setSelectedOrFilter(e.target.value)}
+              className="w-full py-2.5 px-3 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+            >
+              <option value="ALL">Semua OR ({items.length})</option>
+              {uniqueOrs.map((or) => (
+                <option key={or} value={or}>
+                  {or}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {isFiltered && (
+            <button
+              onClick={resetSearch}
+              className="inline-flex items-center justify-center space-x-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
+          )}
+        </div>
+
+        {isFiltered && (
+          <div className="text-xs text-blue-800 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center justify-between">
+            <span>
+              Menampilkan risiko untuk: <strong>{searchTerm || selectedOrFilter}</strong> ({riskyItems.length} item ditemukan)
+            </span>
+            <button onClick={resetSearch} className="underline text-blue-700 font-semibold text-[11px]">
+              Tampilkan Semua
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 3 Dedicated Risk Category Banners */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Category A: Material Shortage Risk */}
         <div
@@ -244,7 +330,7 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
       <div className="space-y-4">
         {riskyItems.length === 0 ? (
           <div className="bg-white p-12 rounded-xl border border-slate-200 text-center text-slate-400 text-xs">
-            Tidak ada item material yang sesuai dengan filter tingkat risiko ini.
+            Tidak ada item material yang sesuai dengan pencarian atau filter tingkat risiko ini.
           </div>
         ) : (
           riskyItems.map((item) => {

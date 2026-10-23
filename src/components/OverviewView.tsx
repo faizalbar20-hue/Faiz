@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Boxes,
   CheckCircle2,
@@ -6,12 +6,14 @@ import {
   AlertTriangle,
   Clock,
   Layers,
-  TrendingDown,
   ShieldAlert,
   ArrowRight,
-  Sparkles,
+  Search,
+  RotateCcw,
+  Tag,
 } from 'lucide-react';
 import { PpicDashboardKpi, ParsedMaterialItem } from '../types/ppic';
+import { calculateDashboardKpi } from '../utils/ppicCalculations';
 
 interface OverviewViewProps {
   kpi: PpicDashboardKpi;
@@ -22,31 +24,75 @@ interface OverviewViewProps {
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
-  kpi,
+  kpi: globalKpi,
   items,
   staleThresholdDays,
   onNavigateToTab,
   onSelectMaterial,
 }) => {
-  // Calculate SVG Donut values
-  const total = kpi.totalRows || 1;
-  const readyPct = (kpi.readyRows / total) * 100;
-  const notReadyPct = (kpi.notReadyRows / total) * 100;
-  const checkDataPct = (kpi.checkDataRows / total) * 100;
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedOrFilter, setSelectedOrFilter] = useState<string>('ALL');
 
-  // Donut geometry (radius 70, circumference ~ 439.82)
+  // Extract unique OR numbers for quick filtering
+  const uniqueOrs = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((item) => {
+      if (item.orNumber && item.orNumber !== '-') set.add(item.orNumber);
+    });
+    return Array.from(set).sort();
+  }, [items]);
+
+  // Filter items by search term (OR or Style) or selected OR chip
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
+        return false;
+      }
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase().trim();
+        const match =
+          item.orNumber.toLowerCase().includes(q) ||
+          item.style.toLowerCase().includes(q) ||
+          item.materialCode.toLowerCase().includes(q) ||
+          item.materialName.toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [items, searchTerm, selectedOrFilter]);
+
+  const isFiltered = Boolean(searchTerm.trim() || selectedOrFilter !== 'ALL');
+
+  // Calculate dynamic KPIs for filtered items
+  const activeKpi = useMemo(() => {
+    if (!isFiltered) return globalKpi;
+    return calculateDashboardKpi(filteredItems);
+  }, [isFiltered, filteredItems, globalKpi]);
+
+  // Donut geometry for active KPI
+  const total = activeKpi.totalRows || 1;
+  const readyPct = (activeKpi.readyRows / total) * 100;
+  const notReadyPct = (activeKpi.notReadyRows / total) * 100;
+  const checkDataPct = (activeKpi.checkDataRows / total) * 100;
+
   const radius = 70;
   const circumference = 2 * Math.PI * radius;
-  const readyOffset = 0;
   const readyStroke = (readyPct / 100) * circumference;
   const notReadyStroke = (notReadyPct / 100) * circumference;
   const checkDataStroke = (checkDataPct / 100) * circumference;
 
-  // Top Critical Materials
-  const urgentItems = items
-    .filter((i) => i.riskLevel === 'CRITICAL' || i.riskLevel === 'HIGH')
-    .sort((a, b) => b.compositeRiskScore - a.compositeRiskScore)
-    .slice(0, 5);
+  // Top Critical Materials for active items
+  const urgentItems = useMemo(() => {
+    return filteredItems
+      .filter((i) => i.riskLevel === 'CRITICAL' || i.riskLevel === 'HIGH')
+      .sort((a, b) => b.compositeRiskScore - a.compositeRiskScore)
+      .slice(0, 5);
+  }, [filteredItems]);
+
+  const resetFilter = () => {
+    setSearchTerm('');
+    setSelectedOrFilter('ALL');
+  };
 
   return (
     <div className="space-y-6">
@@ -54,10 +100,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-            Ringkasan Kesiapan Material & Risiko PPIC
+            Ringkasan Kesiapan Material &amp; Risiko PPIC
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Monitoring kesiapan pasokan per OR & Style, agregasi kekurangan per satuan, dan identifikasi risiko operasional.
+            Monitoring kesiapan pasokan per OR &amp; Style, agregasi kekurangan per satuan, dan identifikasi risiko operasional.
           </p>
         </div>
         <div className="flex items-center space-x-2">
@@ -71,6 +117,83 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
       </div>
 
+      {/* NEW: Dedicated Search Bar for OR and Style on Overview */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Cari OR atau Style (contoh: OR 1095, KS-882, Chino, dsb.)..."
+              className="w-full pl-9 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+            />
+          </div>
+
+          {isFiltered && (
+            <button
+              onClick={resetFilter}
+              className="inline-flex items-center justify-center space-x-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Filter</span>
+            </button>
+          )}
+        </div>
+
+        {/* Quick Filter Chips for OR numbers */}
+        {uniqueOrs.length > 0 && (
+          <div className="flex items-center space-x-2 pt-1 overflow-x-auto text-xs">
+            <span className="text-slate-400 text-[11px] font-medium shrink-0 flex items-center gap-1">
+              <Tag className="w-3 h-3" /> Filter Cepat OR:
+            </span>
+            <button
+              onClick={() => setSelectedOrFilter('ALL')}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition shrink-0 ${
+                selectedOrFilter === 'ALL'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Semua OR ({items.length})
+            </button>
+            {uniqueOrs.map((or) => {
+              const count = items.filter((i) => i.orNumber === or).length;
+              const hasNotReady = items.some((i) => i.orNumber === or && i.readinessStatus === 'NOT READY');
+              return (
+                <button
+                  key={or}
+                  onClick={() => setSelectedOrFilter(selectedOrFilter === or ? 'ALL' : or)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition shrink-0 flex items-center space-x-1 border ${
+                    selectedOrFilter === or
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : hasNotReady
+                      ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{or}</span>
+                  <span className="text-[10px] opacity-75">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Filter status indicator */}
+        {isFiltered && (
+          <div className="text-xs text-blue-800 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center justify-between">
+            <span>
+              Menampilkan hasil filter untuk: <strong>{searchTerm || selectedOrFilter}</strong> ({filteredItems.length} baris material)
+            </span>
+            <button onClick={resetFilter} className="underline text-blue-700 font-semibold text-[11px]">
+              Tampilkan Semua
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Total Items */}
@@ -80,9 +203,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <Boxes className="w-4 h-4 text-slate-400" />
           </div>
           <div className="mt-2">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">{kpi.totalRows}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">{activeKpi.totalRows}</div>
             <div className="text-[11px] text-slate-500 mt-0.5">
-              {kpi.uniqueMaterialsCount} kode unik material
+              {activeKpi.uniqueMaterialsCount} kode unik material
             </div>
           </div>
         </div>
@@ -94,9 +217,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="mt-2">
-            <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700">{kpi.readyRows}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700">{activeKpi.readyRows}</div>
             <div className="text-[11px] text-emerald-600 mt-0.5 font-medium">
-              {kpi.readinessPercentage}% terpenuhi (OKE)
+              {activeKpi.readinessPercentage}% terpenuhi (OKE)
             </div>
           </div>
         </div>
@@ -108,9 +231,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <XCircle className="w-4 h-4 text-amber-600" />
           </div>
           <div className="mt-2">
-            <div className="text-2xl sm:text-3xl font-extrabold text-amber-800">{kpi.notReadyRows}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-amber-800">{activeKpi.notReadyRows}</div>
             <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
-              Terdampak pada {kpi.affectedOrCount} OR & {kpi.affectedStyleCount} Style
+              Terdampak pada {activeKpi.affectedOrCount} OR &amp; {activeKpi.affectedStyleCount} Style
             </div>
           </div>
         </div>
@@ -122,9 +245,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <AlertTriangle className="w-4 h-4 text-purple-600" />
           </div>
           <div className="mt-2">
-            <div className="text-2xl sm:text-3xl font-extrabold text-purple-900">{kpi.checkDataRows}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-purple-900">{activeKpi.checkDataRows}</div>
             <div className="text-[11px] text-purple-700 mt-0.5 font-medium">
-              Status & kuantitas bertentangan
+              Status &amp; kuantitas bertentangan
             </div>
           </div>
         </div>
@@ -136,13 +259,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         <div className="bg-white p-4 rounded-xl border border-red-200 bg-red-50/10 shadow-xs flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-red-700">
-              Risiko Kritis & Tinggi
+              Risiko Kritis &amp; Tinggi
             </div>
             <div className="text-2xl font-bold text-red-900 mt-1">
-              {kpi.criticalRiskCount + kpi.highRiskCount} Item
+              {activeKpi.criticalRiskCount + activeKpi.highRiskCount} Item
             </div>
             <div className="text-[11px] text-red-600 mt-0.5">
-              {kpi.criticalRiskCount} Kritis (P1) • {kpi.highRiskCount} Tinggi (P2)
+              {activeKpi.criticalRiskCount} Kritis (P1) • {activeKpi.highRiskCount} Tinggi (P2)
             </div>
           </div>
           <div className="w-12 h-12 rounded-lg bg-red-100 flex items-center justify-center text-red-600">
@@ -157,7 +280,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               Data Usang (Stale)
             </div>
             <div className="text-2xl font-bold text-orange-900 mt-1">
-              {kpi.staleDataCount} Item
+              {activeKpi.staleDataCount} Item
             </div>
             <div className="text-[11px] text-orange-600 mt-0.5">
               Tidak diupdate &gt; {staleThresholdDays} hari (Kolom D)
@@ -175,7 +298,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               Dampak Produksi (OR/Style)
             </div>
             <div className="text-2xl font-bold text-blue-900 mt-1">
-              {kpi.affectedOrCount} OR / {kpi.affectedStyleCount} Style
+              {activeKpi.affectedOrCount} OR / {activeKpi.affectedStyleCount} Style
             </div>
             <div className="text-[11px] text-blue-600 mt-0.5">
               Berpotensi tertunda karena material belum ready
@@ -201,7 +324,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 my-4">
-            {/* SVG Donut */}
             <div className="relative w-44 h-44 flex items-center justify-center">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 160 160">
                 <circle
@@ -212,7 +334,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                   strokeWidth="18"
                   fill="none"
                 />
-                {/* READY segment (Emerald) */}
                 <circle
                   cx="80"
                   cy="80"
@@ -223,7 +344,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                   strokeDashoffset="0"
                   fill="none"
                 />
-                {/* NOT READY segment (Amber) */}
                 <circle
                   cx="80"
                   cy="80"
@@ -234,7 +354,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                   strokeDashoffset={-readyStroke}
                   fill="none"
                 />
-                {/* CHECK DATA segment (Purple) */}
                 <circle
                   cx="80"
                   cy="80"
@@ -248,7 +367,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
                 <span className="text-3xl font-extrabold text-slate-900">
-                  {kpi.readinessPercentage}%
+                  {activeKpi.readinessPercentage}%
                 </span>
                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
                   Kesiapan
@@ -256,34 +375,33 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               </div>
             </div>
 
-            {/* Legend */}
             <div className="space-y-2 text-xs">
               <div className="flex items-center space-x-2">
                 <span className="w-3 h-3 rounded-xs bg-emerald-500 shrink-0"></span>
                 <span className="text-slate-600">READY:</span>
                 <span className="font-semibold text-slate-900">
-                  {kpi.readyRows} baris ({readyPct.toFixed(1)}%)
+                  {activeKpi.readyRows} ({readyPct.toFixed(1)}%)
                 </span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="w-3 h-3 rounded-xs bg-amber-500 shrink-0"></span>
                 <span className="text-slate-600">NOT READY:</span>
                 <span className="font-semibold text-slate-900">
-                  {kpi.notReadyRows} baris ({notReadyPct.toFixed(1)}%)
+                  {activeKpi.notReadyRows} ({notReadyPct.toFixed(1)}%)
                 </span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="w-3 h-3 rounded-xs bg-purple-500 shrink-0"></span>
                 <span className="text-slate-600">CHECK DATA:</span>
                 <span className="font-semibold text-slate-900">
-                  {kpi.checkDataRows} baris ({checkDataPct.toFixed(1)}%)
+                  {activeKpi.checkDataRows} ({checkDataPct.toFixed(1)}%)
                 </span>
               </div>
             </div>
           </div>
 
           <div className="bg-slate-50 p-3 rounded-lg text-[11px] text-slate-500 border border-slate-200">
-            <strong>Kaidah PPIC:</strong> Status READY terpenuhi jika seluruh kuantitas diterima &amp; status sumber terverifikasi OKE.
+            <strong>Kaidah PPIC:</strong> Kesiapan dihitung dari baris yang terpenuhi kuantitasnya dan status sumber OKE.
           </div>
         </div>
 
@@ -294,59 +412,55 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               Distribusi Tingkat Risiko Material
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Pengelompokan berdasarkan skor gabungan (Shortage Severity, Umur Data Kolom D, dan Anomali)
+              Berdasarkan gabungan Shortage Severity, Umur Data Kolom D, dan Anomali
             </p>
           </div>
 
           <div className="grid grid-cols-4 gap-3 my-4">
-            {/* Critical */}
             <div className="flex flex-col items-center bg-red-50 border border-red-200 rounded-lg p-3">
               <span className="text-[11px] font-bold text-red-800 uppercase">CRITICAL</span>
-              <span className="text-2xl font-black text-red-700 my-1">{kpi.criticalRiskCount}</span>
-              <span className="text-[10px] text-red-600 text-center font-medium">Follow-up Segera (P1)</span>
+              <span className="text-2xl font-black text-red-700 my-1">{activeKpi.criticalRiskCount}</span>
+              <span className="text-[10px] text-red-600 text-center font-medium">P1 - Segera</span>
               <div className="w-full bg-red-200 h-1.5 rounded-full mt-2 overflow-hidden">
                 <div
                   className="bg-red-600 h-full rounded-full"
-                  style={{ width: `${(kpi.criticalRiskCount / total) * 100}%` }}
+                  style={{ width: `${(activeKpi.criticalRiskCount / total) * 100}%` }}
                 ></div>
               </div>
             </div>
 
-            {/* High */}
             <div className="flex flex-col items-center bg-orange-50 border border-orange-200 rounded-lg p-3">
               <span className="text-[11px] font-bold text-orange-800 uppercase">HIGH</span>
-              <span className="text-2xl font-black text-orange-700 my-1">{kpi.highRiskCount}</span>
-              <span className="text-[10px] text-orange-600 text-center font-medium">Prioritas Tinggi (P2)</span>
+              <span className="text-2xl font-black text-orange-700 my-1">{activeKpi.highRiskCount}</span>
+              <span className="text-[10px] text-orange-600 text-center font-medium">P2 - Tinggi</span>
               <div className="w-full bg-orange-200 h-1.5 rounded-full mt-2 overflow-hidden">
                 <div
                   className="bg-orange-600 h-full rounded-full"
-                  style={{ width: `${(kpi.highRiskCount / total) * 100}%` }}
+                  style={{ width: `${(activeKpi.highRiskCount / total) * 100}%` }}
                 ></div>
               </div>
             </div>
 
-            {/* Medium */}
             <div className="flex flex-col items-center bg-amber-50 border border-amber-200 rounded-lg p-3">
               <span className="text-[11px] font-bold text-amber-800 uppercase">MEDIUM</span>
-              <span className="text-2xl font-black text-amber-700 my-1">{kpi.mediumRiskCount}</span>
-              <span className="text-[10px] text-amber-600 text-center font-medium">Pantau Ketat (P3)</span>
+              <span className="text-2xl font-black text-amber-700 my-1">{activeKpi.mediumRiskCount}</span>
+              <span className="text-[10px] text-amber-600 text-center font-medium">P3 - Sedang</span>
               <div className="w-full bg-amber-200 h-1.5 rounded-full mt-2 overflow-hidden">
                 <div
                   className="bg-amber-600 h-full rounded-full"
-                  style={{ width: `${(kpi.mediumRiskCount / total) * 100}%` }}
+                  style={{ width: `${(activeKpi.mediumRiskCount / total) * 100}%` }}
                 ></div>
               </div>
             </div>
 
-            {/* Low */}
             <div className="flex flex-col items-center bg-slate-50 border border-slate-200 rounded-lg p-3">
               <span className="text-[11px] font-bold text-slate-700 uppercase">LOW</span>
-              <span className="text-2xl font-black text-slate-800 my-1">{kpi.lowRiskCount}</span>
+              <span className="text-2xl font-black text-slate-800 my-1">{activeKpi.lowRiskCount}</span>
               <span className="text-[10px] text-slate-500 text-center font-medium">Monitoring Rutin</span>
               <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
                 <div
                   className="bg-slate-600 h-full rounded-full"
-                  style={{ width: `${(kpi.lowRiskCount / total) * 100}%` }}
+                  style={{ width: `${(activeKpi.lowRiskCount / total) * 100}%` }}
                 ></div>
               </div>
             </div>
@@ -354,7 +468,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
           <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
             <span className="text-slate-500">
-              Total {kpi.criticalRiskCount + kpi.highRiskCount} item membutuhkan tindakan mitigasi tim PPIC.
+              Total {activeKpi.criticalRiskCount + activeKpi.highRiskCount} item membutuhkan tindakan mitigasi tim PPIC.
             </span>
             <button
               onClick={() => onNavigateToTab('risk')}
@@ -385,13 +499,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             </span>
           </div>
 
-          {kpi.shortageByUnit.length === 0 ? (
+          {activeKpi.shortageByUnit.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-xs">
-              Tidak ada kekurangan material tercatat (Semua kebutuhan terpenuhi).
+              Tidak ada kekurangan material tercatat untuk pencarian ini.
             </div>
           ) : (
             <div className="space-y-3">
-              {kpi.shortageByUnit.map((item) => (
+              {activeKpi.shortageByUnit.map((item) => (
                 <div
                   key={item.unit}
                   className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-slate-50 transition flex items-center justify-between"
@@ -443,7 +557,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
           {urgentItems.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-xs">
-              Tidak ada material berisiko kritis saat ini.
+              Tidak ada material berisiko kritis untuk pencarian ini.
             </div>
           ) : (
             <div className="divide-y divide-slate-100">

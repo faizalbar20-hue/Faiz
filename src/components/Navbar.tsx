@@ -1,20 +1,7 @@
 import React from 'react';
-import {
-  RefreshCw,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  FileSpreadsheet,
-  LogOut,
-  UserCheck,
-} from 'lucide-react';
-import { User } from 'firebase/auth';
+import { RefreshCw, Clock, FileSpreadsheet } from 'lucide-react';
 
 interface NavbarProps {
-  currentUser: User | null;
-  onSignIn: () => void;
-  onSignOut: () => void;
-  isAuthenticating: boolean;
   isSyncing: boolean;
   onManualRefresh: () => void;
   lastSyncTime: Date | null;
@@ -27,10 +14,6 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  currentUser,
-  onSignIn,
-  onSignOut,
-  isAuthenticating,
   isSyncing,
   onManualRefresh,
   lastSyncTime,
@@ -62,7 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <span className="font-semibold text-base sm:text-lg tracking-tight text-slate-100">
-                  PPIC Material Readiness & Risk
+                  PPIC Material Readiness &amp; Risk
                 </span>
                 {isDemoMode ? (
                   <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2 py-0.5 rounded font-mono font-medium">
@@ -122,43 +105,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               {isDemoMode ? 'Ganti ke Data Nyata' : 'Mode Demo'}
             </button>
-
-            {/* Google Account */}
-            {currentUser ? (
-              <div className="flex items-center space-x-2 pl-2 border-l border-slate-800">
-                <div className="w-7 h-7 rounded-full bg-blue-700 flex items-center justify-center text-xs font-bold text-white overflow-hidden">
-                  {currentUser.photoURL ? (
-                    <img src={currentUser.photoURL} alt="User" className="w-full h-full object-cover" />
-                  ) : (
-                    (currentUser.displayName || currentUser.email || 'U')[0].toUpperCase()
-                  )}
-                </div>
-                <div className="hidden lg:block text-left text-xs">
-                  <div className="font-medium text-slate-200 truncate max-w-[120px]">
-                    {currentUser.displayName || 'PPIC User'}
-                  </div>
-                  <div className="text-[10px] text-slate-400 truncate max-w-[120px]">
-                    {currentUser.email}
-                  </div>
-                </div>
-                <button
-                  onClick={onSignOut}
-                  title="Sign out dari Google"
-                  className="text-slate-400 hover:text-red-400 p-1 rounded transition"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={onSignIn}
-                disabled={isAuthenticating}
-                className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium px-3 py-1.5 rounded-md transition shadow-sm disabled:opacity-50"
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>{isAuthenticating ? 'Menghubungkan...' : 'Sign In Google'}</span>
-              </button>
-            )}
           </div>
         </div>
       </div>

@@ -5,18 +5,13 @@ import {
   AlertOctagon,
   Clock,
   Database,
-  FileSpreadsheet,
   ShieldCheck,
-  AlertTriangle,
   History,
-  Activity,
-  UserCheck,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { SyncLogEntry, ParsedMaterialItem } from '../types/ppic';
-import { User } from 'firebase/auth';
 
 interface SyncStatusViewProps {
-  currentUser: User | null;
   spreadsheetId: string;
   sheetName: string;
   isSyncing: boolean;
@@ -26,12 +21,10 @@ interface SyncStatusViewProps {
   items: ParsedMaterialItem[];
   onManualRefresh: () => void;
   isDemoMode: boolean;
-  onSignIn: () => void;
   detectedHeaders: string[];
 }
 
 export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
-  currentUser,
   spreadsheetId,
   sheetName,
   isSyncing,
@@ -41,10 +34,8 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
   items,
   onManualRefresh,
   isDemoMode,
-  onSignIn,
   detectedHeaders,
 }) => {
-  // Items with data validation issues or formula discrepancies
   const issueItems = items.filter(
     (i) => i.readinessStatus === 'CHECK DATA' || i.hasDiscrepancy || i.validationWarnings.length > 0
   );
@@ -58,7 +49,7 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
             Data &amp; Sync Status Monitoring
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Status koneksi Google Sheets API, log sinkronisasi berkala, dan rekap validasi integritas baris data.
+            Status koneksi Google Sheets, log sinkronisasi berkala, dan rekap validasi integritas baris data.
           </p>
         </div>
         <div className="flex items-center space-x-2">
@@ -94,7 +85,7 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
                 <span className="w-3 h-3 rounded-full bg-red-500"></span>
                 <span className="text-base font-bold text-red-700">Koneksi Error</span>
               </div>
-            ) : currentUser ? (
+            ) : spreadsheetId ? (
               <div className="flex items-center space-x-2">
                 <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
                 <span className="text-base font-bold text-emerald-700">Terhubung ke Google Sheets</span>
@@ -102,46 +93,41 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
             ) : (
               <div className="flex items-center space-x-2">
                 <span className="w-3 h-3 rounded-full bg-slate-400"></span>
-                <span className="text-base font-bold text-slate-700">Perlu Sign In Google</span>
+                <span className="text-base font-bold text-slate-700">Menunggu Input URL Sheet</span>
               </div>
             )}
             <div className="text-xs text-slate-500 mt-1">
               {isDemoMode
-                ? 'Menggunakan dataset simulasi PPIC Garment internal'
+                ? 'Menggunakan dataset simulasi PPIC Garment'
                 : spreadsheetId
-                ? `Target: Sheet '${sheetName}' (ID: ${spreadsheetId.slice(0, 12)}...)`
-                : 'Spreadsheet ID belum dikonfigurasi'}
+                ? `Target: Sheet '${sheetName || 'Rekap'}' (ID: ${spreadsheetId.slice(0, 12)}...)`
+                : 'Spreadsheet ID belum dikonfigurasi di Settings'}
             </div>
           </div>
-          {!currentUser && !isDemoMode && (
-            <button
-              onClick={onSignIn}
-              className="w-full text-xs py-1.5 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition"
-            >
-              Sign In Akun Google
-            </button>
-          )}
+          <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-2">
+            Metode: Direct Link &amp; GViz Live
+          </div>
         </div>
 
-        {/* Auth / Account State */}
+        {/* Target Sheet info */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Otorisasi Pengguna
+              Lembar Kerja Acuan
             </span>
-            <UserCheck className="w-4 h-4 text-slate-400" />
+            <FileSpreadsheet className="w-4 h-4 text-slate-400" />
           </div>
           <div className="my-3">
-            <div className="text-sm font-bold text-slate-800 truncate">
-              {currentUser ? currentUser.displayName || currentUser.email : 'Belum Login'}
+            <div className="text-base font-bold text-slate-800">
+              Sheet: &quot;{sheetName || 'Rekap'}&quot;
             </div>
-            <div className="text-xs text-slate-500 mt-0.5 truncate">
-              {currentUser ? currentUser.email : 'Menggunakan token client-side OAuth Bearer'}
+            <div className="text-xs text-slate-500 mt-0.5">
+              Struktur kolom B (OR) s/d J (Ket)
             </div>
           </div>
           <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-2 flex items-center space-x-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Scope: spreadsheets.readonly</span>
+            <span>Tanpa Login Akun • Akses Link Viewer</span>
           </div>
         </div>
 
@@ -161,7 +147,7 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
                     minute: '2-digit',
                     second: '2-digit',
                   })
-                : 'Belum sinkron'}
+                : 'Belum pernah'}
             </div>
             <div className="text-xs text-slate-500 mt-0.5">
               {lastSyncTime
@@ -185,7 +171,7 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
               {lastError}
             </div>
             <div className="mt-2 text-slate-600">
-              <strong>Solusi:</strong> Pastikan spreadsheet dibagikan ke email Anda, Spreadsheet ID valid, dan sheet bernama &apos;{sheetName}&apos; ada di dalam dokumen.
+              <strong>Solusi Cepat:</strong> Buka Google Sheets Anda &rarr; Klik tombol <strong>Bagikan (Share)</strong> di pojok kanan atas &rarr; Pastikan disetel ke <strong>&quot;Siapa saja yang memiliki link&quot; (Viewer)</strong> &rarr; Salin link ke form di atas.
             </div>
           </div>
         </div>
