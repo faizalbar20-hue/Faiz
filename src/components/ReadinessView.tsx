@@ -11,6 +11,7 @@ import {
   Eye,
   RotateCcw,
   SlidersHorizontal,
+  Calendar,
 } from 'lucide-react';
 import { ParsedMaterialItem, ReadinessStatus, RiskLevel } from '../types/ppic';
 
@@ -29,6 +30,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 }) => {
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateSearchTerm, setDateSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [riskFilter, setRiskFilter] = useState<string>('ALL');
   const [orFilter, setOrFilter] = useState<string>('ALL');
@@ -73,6 +75,16 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
           if (!match) return false;
         }
 
+        // Tanggal Update Search
+        if (dateSearchTerm.trim()) {
+          const dq = dateSearchTerm.toLowerCase().trim();
+          const matchDate =
+            item.updateDateFormatted.toLowerCase().includes(dq) ||
+            (item.dataAgeDays !== null && `${item.dataAgeDays} hari`.includes(dq)) ||
+            (item.updateDate ? item.updateDate.toISOString().toLowerCase().includes(dq) : false);
+          if (!matchDate) return false;
+        }
+
         // Status Filter
         if (statusFilter !== 'ALL' && item.readinessStatus !== statusFilter) return false;
 
@@ -107,7 +119,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 
         return sortDirection === 'asc' ? valA - valB : valB - valA;
       });
-  }, [items, searchTerm, statusFilter, riskFilter, orFilter, unitFilter, onlyStale, sortField, sortDirection]);
+  }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, onlyStale, sortField, sortDirection]);
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredItems.length / pageSize) || 1;
@@ -127,6 +139,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 
   const resetFilters = () => {
     setSearchTerm('');
+    setDateSearchTerm('');
     setStatusFilter('ALL');
     setRiskFilter('ALL');
     setOrFilter('ALL');
@@ -148,7 +161,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
       'Recorded Balance (Col H)',
       'Calculated Shortage',
       'Unit',
-      'Update Date (Col D)',
+      'Tanggal Update',
       'Data Age (Days)',
       'Source Status (Col J)',
       'Readiness Status',
@@ -212,9 +225,9 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          {/* Search Box */}
-          <div className="md:col-span-4 relative">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-3">
+          {/* Search Box Material / OR / Style */}
+          <div className="md:col-span-3 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
@@ -223,9 +236,37 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                 setSearchTerm(e.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="Cari kode material, nama, OR, atau style..."
+              placeholder="Cari kode, nama, OR, style..."
               className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
             />
+          </div>
+
+          {/* Search Box Tanggal Update */}
+          <div className="md:col-span-3 relative">
+            <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              value={dateSearchTerm}
+              onChange={(e) => {
+                setDateSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
+              placeholder="Cari Tanggal Update (misal: 22/10, Okt)..."
+              className="w-full pl-9 pr-7 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+            />
+            {dateSearchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateSearchTerm('');
+                  setCurrentPage(1);
+                }}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+                title="Hapus pencarian tanggal"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
           {/* Status Filter */}
@@ -264,14 +305,15 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
           </div>
 
           {/* OR Filter */}
-          <div className="md:col-span-2">
+          <div className="md:col-span-1">
             <select
               value={orFilter}
               onChange={(e) => {
                 setOrFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full py-2 px-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full py-2 px-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Filter Nomor OR"
             >
               <option value="ALL">Semua OR</option>
               {uniqueOrs.map((or) => (
@@ -283,14 +325,15 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
           </div>
 
           {/* Unit Filter */}
-          <div className="md:col-span-2">
+          <div className="md:col-span-1">
             <select
               value={unitFilter}
               onChange={(e) => {
                 setUnitFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full py-2 px-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full py-2 px-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Filter Satuan"
             >
               <option value="ALL">Semua Satuan</option>
               {uniqueUnits.map((u) => (
@@ -326,7 +369,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
             <span>
               Menampilkan <strong>{filteredItems.length}</strong> dari <strong>{items.length}</strong> material
             </span>
-            {(searchTerm || statusFilter !== 'ALL' || riskFilter !== 'ALL' || orFilter !== 'ALL' || unitFilter !== 'ALL' || onlyStale) && (
+            {(searchTerm || dateSearchTerm || statusFilter !== 'ALL' || riskFilter !== 'ALL' || orFilter !== 'ALL' || unitFilter !== 'ALL' || onlyStale) && (
               <button
                 onClick={resetFilters}
                 className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-medium ml-2"
@@ -389,7 +432,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                   className="py-3 px-3 cursor-pointer hover:bg-slate-800 transition"
                 >
                   <div className="flex items-center space-x-1">
-                    <span>Tgl Update (Kol D)</span>
+                    <span>Tanggal Update</span>
                     <ArrowUpDown className="w-3 h-3 opacity-60" />
                   </div>
                 </th>
