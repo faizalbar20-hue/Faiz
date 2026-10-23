@@ -55,9 +55,19 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error('Google Sign In error:', error);
-    throw error;
+    if (error?.code === 'auth/popup-blocked') {
+      throw new Error('Jendela popup Google diblokir oleh browser / iframe. Silakan izinkan popup (Allow Popups) di browser Anda, atau cukup masukkan link Google Sheet di tab Settings tanpa perlu login.');
+    }
+    if (error?.code === 'auth/popup-closed-by-user') {
+      throw new Error('Jendela otentikasi Google ditutup sebelum selesai.');
+    }
+    if (error?.code === 'auth/cancelled-popup-request') {
+      throw new Error('Permintaan login Google sebelumnya dibatalkan.');
+    }
+    const msg = error?.message || 'Gagal login Google.';
+    throw new Error(msg);
   } finally {
     isSigningIn = false;
   }

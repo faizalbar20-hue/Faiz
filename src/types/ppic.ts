@@ -128,6 +128,8 @@ export interface ColumnMappingConfig {
 export interface AppSettings {
   spreadsheetId: string;
   sheetName: string; // Default: 'Rekap'
+  appsScriptUrl?: string; // Optional Google Apps Script Web App URL
+  connectionMethod?: 'AUTO' | 'GVIZ' | 'APPS_SCRIPT' | 'OAUTH';
   syncIntervalSeconds: number; // Default: 60
   autoSyncEnabled: boolean;
   staleThresholdDays: number; // Default: 3

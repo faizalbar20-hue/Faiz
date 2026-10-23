@@ -4,7 +4,7 @@
  * @license Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import {
   initAuth,
@@ -13,7 +13,7 @@ import {
   getCachedAccessToken,
   setCachedAccessToken,
 } from './services/googleAuth';
-import { fetchSheetValues, SheetsApiError, extractSpreadsheetId } from './services/sheetsService';
+import { fetchLiveSheetData, SheetsApiError, extractSpreadsheetId } from './services/sheetsService';
 import { getDemoMaterialItems } from './data/demoPpicData';
 import {
   AppSettings,
@@ -31,11 +31,21 @@ import { RiskAnalysisView } from './components/RiskAnalysisView';
 import { SyncStatusView } from './components/SyncStatusView';
 import { SettingsView } from './components/SettingsView';
 import { MaterialDetailModal } from './components/MaterialDetailModal';
-import { AlertTriangle, Database, Info, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  Database,
+  Info,
+  Link2,
+  CheckCircle2,
+  RefreshCw,
+  ExternalLink,
+  FileSpreadsheet,
+} from 'lucide-react';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  spreadsheetId: '', // User inputs their real Google Sheet ID
+  spreadsheetId: '',
   sheetName: 'Rekap',
+  appsScriptUrl: '',
   syncIntervalSeconds: 60,
   autoSyncEnabled: true,
   staleThresholdDays: 3,
@@ -56,11 +66,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     colUnit: 8, // I
     colKet: 9, // J
   },
-  useDemoData: true, // Initially true so the dashboard is immediately functional with PPIC demo data until real sheet is linked
+  useDemoData: true,
 };
 
 export default function App() {
-  // App Settings with localStorage persistence
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem('ppic_dashboard_settings');
@@ -85,11 +94,14 @@ export default function App() {
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [nextSyncSeconds, setNextSyncSeconds] = useState<number>(settings.syncIntervalSeconds);
+  const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
+
+  // Quick connect input for real mode
+  const [quickSheetUrl, setQuickSheetUrl] = useState<string>('');
 
   // Modal inspection
   const [selectedMaterial, setSelectedMaterial] = useState<ParsedMaterialItem | null>(null);
 
-  // Save settings helper
   const updateSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     try {
@@ -123,7 +135,6 @@ export default function App() {
 
     // Case 1: Demo mode
     if (settings.useDemoData) {
-      // Simulate quick processing
       const demoItems = getDemoMaterialItems(settings.riskWeights);
       setItems(demoItems);
       setLastSyncTime(new Date());
@@ -135,7 +146,7 @@ export default function App() {
         timestamp: new Date(),
         status: 'SUCCESS',
         rowCount: demoItems.length,
-        message: `Sinkronisasi Simulasi DEMO berhasil (${demoItems.length} baris material dimuat).`,
+        message: `Simulasi DEMO berhasil (${demoItems.length} baris material dimuat).`,
         durationMs: Date.now() - startTime,
         source: 'DEMO_DATA',
       };
@@ -145,27 +156,25 @@ export default function App() {
 
     // Case 2: Real Google Sheets mode
     const cleanId = extractSpreadsheetId(settings.spreadsheetId);
-    if (!cleanId) {
+    if (!cleanId && !settings.appsScriptUrl) {
       setIsSyncing(false);
-      setLastError('Spreadsheet ID belum diisi. Silakan masukkan link atau ID Google Sheets pada tab Settings.');
-      return;
-    }
-
-    const token = accessToken || getCachedAccessToken();
-    if (!token) {
-      setIsSyncing(false);
-      setLastError('Diperlukan otentikasi Google. Silakan klik tombol "Sign In Google" di navbar atas untuk mengakses spreadsheet Anda.');
+      // Clear demo items so user does not see unchanged data
+      setItems([]);
+      setLastError(
+        'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk memulai membaca data nyata.'
+      );
       return;
     }
 
     try {
-      const result = await fetchSheetValues(
-        cleanId,
-        settings.sheetName || 'Rekap',
-        token,
-        settings.riskWeights,
-        settings.columnMapping
-      );
+      const result = await fetchLiveSheetData({
+        spreadsheetId: cleanId,
+        sheetName: settings.sheetName || 'Rekap',
+        appsScriptUrl: settings.appsScriptUrl,
+        accessToken: accessToken || getCachedAccessToken(),
+        weights: settings.riskWeights,
+        customMapping: settings.columnMapping,
+      });
 
       setItems(result.items);
       setDetectedHeaders(result.detectedHeaders);
@@ -178,7 +187,7 @@ export default function App() {
         timestamp: new Date(),
         status: 'SUCCESS',
         rowCount: result.items.length,
-        message: `Sinkronisasi Google Sheets '${result.activeSheetName}' berhasil (${result.items.length} baris diproses).`,
+        message: `Sinkronisasi Google Sheets '${result.activeSheetName}' sukses (${result.items.length} baris diproses via ${result.sourceType}).`,
         durationMs: Date.now() - startTime,
         source: 'GOOGLE_SHEETS',
       };
@@ -192,6 +201,8 @@ export default function App() {
           : 'Gagal menyinkronkan data Google Sheets';
 
       setLastError(errMsg);
+      // Clear items so old demo data doesn't fool user
+      setItems([]);
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
@@ -210,6 +221,7 @@ export default function App() {
     settings.useDemoData,
     settings.spreadsheetId,
     settings.sheetName,
+    settings.appsScriptUrl,
     settings.riskWeights,
     settings.columnMapping,
     settings.syncIntervalSeconds,
@@ -223,7 +235,7 @@ export default function App() {
 
   // Auto-sync countdown timer
   useEffect(() => {
-    if (!settings.autoSyncEnabled) return;
+    if (!settings.autoSyncEnabled || settings.useDemoData) return;
 
     const interval = setInterval(() => {
       setNextSyncSeconds((prev) => {
@@ -236,7 +248,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [settings.autoSyncEnabled, settings.syncIntervalSeconds, syncData]);
+  }, [settings.autoSyncEnabled, settings.useDemoData, settings.syncIntervalSeconds, syncData]);
 
   // Handle Google Sign In
   const handleSignIn = async () => {
@@ -246,32 +258,75 @@ export default function App() {
       const res = await googleSignIn();
       setCurrentUser(res.user);
       setAccessToken(res.accessToken);
-      // If we were in demo mode and now logged in, prompt or switch to real
+      // Retrigger sync
+      syncData();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login Google dibatalkan atau gagal.';
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Login Google dibatalkan atau diblokir oleh browser.';
       setLastError(msg);
     } finally {
       setIsAuthenticating(false);
     }
   };
 
-  // Handle Google Sign Out
   const handleSignOut = async () => {
     await googleSignOut();
     setCurrentUser(null);
     setAccessToken(null);
   };
 
-  // Toggle Demo Mode
   const handleToggleDemoMode = () => {
     const nextVal = !settings.useDemoData;
-    updateSettings({ ...settings, useDemoData: nextVal });
-    if (!nextVal && !settings.spreadsheetId) {
-      setActiveTab('settings');
+    const newSettings = { ...settings, useDemoData: nextVal };
+    updateSettings(newSettings);
+    if (!nextVal) {
+      if (!newSettings.spreadsheetId) {
+        setItems([]);
+        setActiveTab('settings');
+      }
     }
   };
 
-  // Compute Dashboard KPI
+  // Quick connect handler
+  const handleQuickConnect = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickSheetUrl.trim()) return;
+    const cleanId = extractSpreadsheetId(quickSheetUrl);
+    const newSettings: AppSettings = {
+      ...settings,
+      spreadsheetId: cleanId,
+      useDemoData: false,
+    };
+    updateSettings(newSettings);
+  };
+
+  // Test connection button in settings
+  const handleTestConnection = async (testId: string, testSheet: string) => {
+    setIsTestingConnection(true);
+    setLastError(null);
+    try {
+      const res = await fetchLiveSheetData({
+        spreadsheetId: extractSpreadsheetId(testId),
+        sheetName: testSheet || 'Rekap',
+        appsScriptUrl: settings.appsScriptUrl,
+        accessToken,
+        weights: settings.riskWeights,
+        customMapping: settings.columnMapping,
+      });
+      setItems(res.items);
+      setLastSyncTime(new Date());
+      alert(`Koneksi Berhasil! Terbaca ${res.items.length} baris material dari sheet '${res.activeSheetName}'.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Koneksi gagal.';
+      setLastError(msg);
+      alert(`Koneksi Gagal: ${msg}`);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
   const kpi: PpicDashboardKpi = calculateDashboardKpi(items);
 
   return (
@@ -293,25 +348,116 @@ export default function App() {
         sheetName={settings.sheetName}
       />
 
-      {/* Demo Notice Banner */}
-      {settings.useDemoData && (
+      {/* Mode Banner */}
+      {settings.useDemoData ? (
         <div className="bg-amber-500/10 border-b border-amber-300/40 text-amber-900 px-4 py-2 text-xs flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
             <span className="font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-200 border border-amber-400 text-[10px] text-amber-900">
-              SIMULASI DEMO
+              SIMULASI DEMO AKTIF
             </span>
             <span>
-              Sedang menampilkan data contoh manufaktur garment (OR 1095, OR 1014, OR 1036) sesuai struktur kolom acuan Rekap.
+              Menampilkan data simulasi pabrik garmen. Ingin melihat data dari Google Sheets Anda sendiri?
             </span>
           </div>
           <button
             onClick={() => {
+              updateSettings({ ...settings, useDemoData: false });
               setActiveTab('settings');
             }}
             className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline whitespace-nowrap"
           >
-            Hubungkan Google Sheets Nyata Anda di Settings &rarr;
+            Beralih ke Data Nyata &amp; Hubungkan Spreadsheet &rarr;
           </button>
+        </div>
+      ) : (
+        <div className="bg-emerald-500/10 border-b border-emerald-300/40 text-emerald-950 px-4 py-2 text-xs flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <span className="font-extrabold uppercase px-1.5 py-0.5 rounded bg-emerald-200 border border-emerald-400 text-[10px] text-emerald-900">
+              MODE DATA NYATA (LIVE)
+            </span>
+            <span>
+              {settings.spreadsheetId
+                ? `Membaca Google Sheets [${settings.sheetName || 'Rekap'}]`
+                : 'Menunggu input link Google Sheets nyata Anda'}
+            </span>
+          </div>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
+          >
+            Ubah Pengaturan Sheet
+          </button>
+        </div>
+      )}
+
+      {/* Real Data Mode Prompt when no spreadsheet configured */}
+      {!settings.useDemoData && (!settings.spreadsheetId || items.length === 0) && (
+        <div className="max-w-7xl w-full mx-auto p-4 sm:p-6">
+          <div className="bg-white rounded-2xl border border-blue-200 shadow-sm p-6 sm:p-8">
+            <div className="flex items-start space-x-4">
+              <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+                <FileSpreadsheet className="w-6 h-6" />
+              </div>
+              <div className="space-y-2 flex-1">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Hubungkan Google Sheets Nyata Anda
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Tempelkan tautan (link) Google Sheets Anda yang memiliki sheet bernama <strong>Rekap</strong>.
+                  Data akan langsung disinkronkan ke dashboard tanpa perlu konfigurasi rumit.
+                </p>
+
+                {lastError && (
+                  <div className="bg-red-50 border border-red-200 p-3 rounded-lg text-xs text-red-800 space-y-1 my-2">
+                    <div className="font-bold flex items-center space-x-1">
+                      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>Kendala Koneksi:</span>
+                    </div>
+                    <p className="leading-snug">{lastError}</p>
+                  </div>
+                )}
+
+                <form onSubmit={handleQuickConnect} className="pt-2 flex flex-col sm:flex-row gap-2 max-w-2xl">
+                  <input
+                    type="text"
+                    value={quickSheetUrl}
+                    onChange={(e) => setQuickSheetUrl(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5.../edit"
+                    className="flex-1 text-xs font-mono p-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSyncing || !quickSheetUrl.trim()}
+                    className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow-sm transition disabled:opacity-50 shrink-0 flex items-center justify-center space-x-2"
+                  >
+                    <Link2 className="w-4 h-4" />
+                    <span>{isSyncing ? 'Membaca...' : 'Hubungkan & Tarik Data'}</span>
+                  </button>
+                </form>
+
+                <div className="pt-3 border-t border-slate-100 text-xs text-slate-500 space-y-1">
+                  <div className="font-semibold text-slate-700">Tips Penting:</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-600">
+                    <li>
+                      Pastikan pada Google Sheets, tombol <strong>Bagikan (Share)</strong> di pojok kanan atas disetel ke: <strong>&quot;Siapa saja yang memiliki link&quot; &rarr; Penglihat (Viewer)</strong>.
+                    </li>
+                    <li>
+                      Pastikan tab lembar kerja bernama <strong>Rekap</strong> dan baris data dimulai setelah baris header.
+                    </li>
+                    <li>
+                      Ingin kembali melihat data contoh sementara?{' '}
+                      <button
+                        onClick={() => updateSettings({ ...settings, useDemoData: true })}
+                        className="text-blue-600 hover:underline font-semibold"
+                      >
+                        Klik di sini untuk Aktifkan Mode Demo
+                      </button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -375,6 +521,8 @@ export default function App() {
                 syncData();
               }}
               availableSheets={availableSheets}
+              onTestConnection={handleTestConnection}
+              isTestingConnection={isTestingConnection}
             />
           )}
         </main>
