@@ -58,7 +58,19 @@ export const DEMO_RAW_ROWS: RawSheetRow[] = [
     rowIndex: 5,
     orNumber: 'OR 1095',
     style: 'KS-882 ANORAK',
-    updateDateRaw: '2026-10-15', // 7 days ago -> Highly Stale
+    updateDateRaw: '2026-10-08', // Obsolete older date (will be filtered out by filterLatestMaterialUpdates)
+    productDisplayName: '[STP-SNAP] SNAP BUTTON METAL 15MM GUNMETAL',
+    quantityRaw: '250',
+    receivedQtyRaw: '0',
+    balanceRaw: '-250',
+    unit: 'GROS',
+    ketRaw: 'BELUM',
+  },
+  {
+    rowIndex: 6,
+    orNumber: 'OR 1095',
+    style: 'KS-882 ANORAK',
+    updateDateRaw: '2026-10-15', // Latest valid update date (kept by filterLatestMaterialUpdates)
     productDisplayName: '[STP-SNAP] SNAP BUTTON METAL 15MM GUNMETAL',
     quantityRaw: '250',
     receivedQtyRaw: '0',

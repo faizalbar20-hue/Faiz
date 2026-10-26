@@ -12,6 +12,8 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Calendar,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { ParsedMaterialItem, ReadinessStatus, RiskLevel } from '../types/ppic';
 
@@ -19,6 +21,7 @@ interface ReadinessViewProps {
   items: ParsedMaterialItem[];
   staleThresholdDays: number;
   onSelectMaterial: (item: ParsedMaterialItem) => void;
+  onToggleFollowUp: (item: ParsedMaterialItem) => void;
 }
 
 type SortField = 'materialCode' | 'orNumber' | 'quantity' | 'calculatedShortage' | 'dataAgeDays' | 'compositeRiskScore' | 'readinessStatus';
@@ -27,6 +30,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
   items,
   staleThresholdDays,
   onSelectMaterial,
+  onToggleFollowUp,
 }) => {
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,6 +39,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
   const [riskFilter, setRiskFilter] = useState<string>('ALL');
   const [orFilter, setOrFilter] = useState<string>('ALL');
   const [unitFilter, setUnitFilter] = useState<string>('ALL');
+  const [followUpFilter, setFollowUpFilter] = useState<string>('ALL');
   const [onlyStale, setOnlyStale] = useState<boolean>(false);
 
   // Sorting & Pagination
@@ -111,6 +116,10 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         // Unit Filter
         if (unitFilter !== 'ALL' && item.unit !== unitFilter) return false;
 
+        // Follow-Up Filter
+        if (followUpFilter === 'RESOLVED' && !item.followUp?.isFollowedUp) return false;
+        if (followUpFilter === 'UNRESOLVED' && item.followUp?.isFollowedUp) return false;
+
         // Only Stale Filter
         if (onlyStale && !item.isStale) return false;
 
@@ -137,7 +146,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         const numB = typeof valB === 'number' && !isNaN(valB) ? valB : 0;
         return sortDirection === 'asc' ? numA - numB : numB - numA;
       });
-  }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, onlyStale, sortField, sortDirection]);
+  }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, followUpFilter, onlyStale, sortField, sortDirection]);
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredItems.length / pageSize) || 1;
@@ -162,6 +171,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
     setRiskFilter('ALL');
     setOrFilter('ALL');
     setUnitFilter('ALL');
+    setFollowUpFilter('ALL');
     setOnlyStale(false);
     setCurrentPage(1);
   };
@@ -181,10 +191,14 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
       'Unit',
       'Tanggal Update',
       'Data Age (Days)',
+      'Jadwal Produksi',
+      'Status Follow-Up',
+      'Follow-Up At',
       'Source Status (Col J)',
       'Readiness Status',
       'Risk Level',
       'Risk Score',
+      'Alasan Risiko',
       'Discrepancy Note',
     ];
 
@@ -201,10 +215,14 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
       `"${i.unit}"`,
       `"${i.updateDateFormatted}"`,
       i.dataAgeDays ?? '',
+      `"${i.productionSchedule?.productionDate || 'Belum Dijadwalkan'}"`,
+      `"${i.followUp?.isFollowedUp ? 'Sudah Follow-up' : 'Belum Follow-up'}"`,
+      `"${i.followUp?.followedUpAt || ''}"`,
       `"${i.sourceStatus}"`,
       `"${i.readinessStatus}"`,
       `"${i.riskLevel}"`,
       i.compositeRiskScore,
+      `"${i.primaryRiskReason || ''}"`,
       `"${(i.validationWarnings || []).join('; ')}"`,
     ]);
 
@@ -365,7 +383,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 
         {/* Filter Badges & Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center space-x-1.5 cursor-pointer text-slate-700 font-medium select-none">
               <input
                 type="checkbox"
@@ -381,6 +399,23 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                 <span>Hanya Data Usang (&gt; {staleThresholdDays} hari)</span>
               </span>
             </label>
+
+            {/* Follow-up filter dropdown */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-slate-500 font-medium text-[11px]">Follow-Up:</span>
+              <select
+                value={followUpFilter}
+                onChange={(e) => {
+                  setFollowUpFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="py-1 px-2 text-xs bg-slate-50 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 font-medium"
+              >
+                <option value="ALL">Semua Follow-up</option>
+                <option value="UNRESOLVED">Belum Follow-up</option>
+                <option value="RESOLVED">Sudah Follow-up</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex items-center space-x-2 text-slate-500">
@@ -473,7 +508,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                     <ArrowUpDown className="w-3 h-3 opacity-60" />
                   </div>
                 </th>
-                <th className="py-3 px-3 text-center w-14">Aksi</th>
+                <th className="py-3 px-3 text-center min-w-[140px]">Follow-Up &amp; Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -505,6 +540,12 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                         <div className="text-[11px] text-slate-500 truncate max-w-[120px]">
                           {item.style}
                         </div>
+                        {item.productionSchedule?.productionDate && (
+                          <div className="text-[10px] text-blue-600 font-medium flex items-center space-x-1 mt-0.5">
+                            <Calendar className="w-2.5 h-2.5" />
+                            <span>Jadwal: {item.productionSchedule.productionDate}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Product */}
@@ -625,18 +666,58 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                         </span>
                       </td>
 
-                      {/* Action */}
+                      {/* Action & Follow-up */}
                       <td className="py-2.5 px-3 text-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectMaterial(item);
-                          }}
-                          className="p-1 hover:bg-blue-100 text-blue-600 rounded transition"
-                          title="Lihat Detail & Rekomendasi"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-center space-x-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleFollowUp(item);
+                            }}
+                            className={`inline-flex items-center space-x-1 px-2 py-1 rounded-md text-[10px] font-bold border transition ${
+                              item.followUp?.isFollowedUp
+                                ? 'bg-emerald-100 border-emerald-300 text-emerald-800 hover:bg-emerald-200'
+                                : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                            }`}
+                            title={
+                              item.followUp?.isFollowedUp
+                                ? `Sudah follow-up ${item.followUp.followedUpAt ? new Date(item.followUp.followedUpAt).toLocaleString('id-ID') : ''}. Klik untuk batalkan.`
+                                : 'Belum follow-up. Klik untuk menandai sudah di-follow up.'
+                            }
+                          >
+                            {item.followUp?.isFollowedUp ? (
+                              <>
+                                <CheckSquare className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>Sudah Follow-up</span>
+                              </>
+                            ) : (
+                              <>
+                                <Square className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>Belum Follow-up</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectMaterial(item);
+                            }}
+                            className="p-1 hover:bg-blue-100 text-blue-600 rounded transition"
+                            title="Lihat Detail & Rekomendasi"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {item.followUp?.isFollowedUp && item.followUp.followedUpAt && (
+                          <div className="text-[9px] text-slate-400 mt-0.5 truncate max-w-[130px] mx-auto font-mono">
+                            {new Date(item.followUp.followedUpAt).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

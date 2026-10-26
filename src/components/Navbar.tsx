@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Clock, FileSpreadsheet } from 'lucide-react';
+import { RefreshCw, Clock, FileSpreadsheet, Bell } from 'lucide-react';
 
 interface NavbarProps {
   isSyncing: boolean;
@@ -11,6 +11,8 @@ interface NavbarProps {
   onToggleDemoMode: () => void;
   spreadsheetId: string;
   sheetName: string;
+  criticalCount: number;
+  onOpenCriticalNotifications: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = React.memo(({
@@ -23,6 +25,8 @@ export const Navbar: React.FC<NavbarProps> = React.memo(({
   onToggleDemoMode,
   spreadsheetId,
   sheetName,
+  criticalCount,
+  onOpenCriticalNotifications,
 }) => {
   // Localized countdown ticker so parent App component does not re-render every second
   const [countdown, setCountdown] = useState<number>(syncIntervalSeconds);
@@ -99,6 +103,29 @@ export const Navbar: React.FC<NavbarProps> = React.memo(({
                 </span>
               )}
             </div>
+
+            {/* Critical Notification Bell */}
+            <button
+              onClick={onOpenCriticalNotifications}
+              className={`relative p-2 rounded-md border text-xs font-semibold transition flex items-center justify-center ${
+                criticalCount > 0
+                  ? 'bg-red-950/40 border-red-500/80 text-red-200 hover:bg-red-900/60 shadow-xs ring-1 ring-red-500/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title={
+                criticalCount > 0
+                  ? `${criticalCount} Kebutuhan Material Kritis - Klik untuk Melihat`
+                  : 'Tidak ada material kritis saat ini'
+              }
+              aria-label="Notifikasi Material Kritis"
+            >
+              <Bell className={`w-4 h-4 ${criticalCount > 0 ? 'text-red-400' : 'text-slate-400'}`} />
+              {criticalCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white font-extrabold text-[10px] min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 border-slate-900 shadow-xs animate-pulse">
+                  {criticalCount > 99 ? '99+' : criticalCount}
+                </span>
+              )}
+            </button>
 
             {/* Refresh Button */}
             <button

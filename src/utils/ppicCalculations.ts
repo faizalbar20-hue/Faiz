@@ -13,6 +13,8 @@ import {
   MaterialCodeSummary,
   RiskWeightsConfig,
   ColumnMappingConfig,
+  ProductionSchedule,
+  MaterialFollowUp,
 } from '../types/ppic';
 
 /**
@@ -229,7 +231,7 @@ export function determineReadinessStatus(
 }
 
 /**
- * Calculates risk scores and generates operational mitigations.
+ * Calculates risk scores and generates operational mitigations with production schedule awareness.
  */
 export function evaluateMaterialRisk(
   quantity: number,
@@ -237,38 +239,59 @@ export function evaluateMaterialRisk(
   readinessStatus: ReadinessStatus,
   dataAgeDays: number | null,
   weights: RiskWeightsConfig,
-  conflictReason?: string
+  conflictReason?: string,
+  productionSchedule?: ProductionSchedule | null,
+  referenceDate: Date = new Date()
 ): {
   shortageRiskScore: number;
   staleRiskScore: number;
   compositeRiskScore: number;
   riskLevel: RiskLevel;
   riskReasons: string[];
+  primaryRiskReason: string;
   recommendedMitigations: string[];
   followUpPriority: 'P1 - Segera' | 'P2 - Tinggi' | 'P3 - Sedang' | 'P4 - Rutin';
+  daysToProduction: number | null;
+  scheduleStatus: 'SCHEDULED' | 'UNSCHEDULED';
 } {
   const riskReasons: string[] = [];
   const mitigations: string[] = [];
+  let primaryRiskReason = 'Status normal';
 
-  // 1. Shortage Risk (0 - 100)
+  const shortage = Math.max(0, quantity - receivedQty);
+  const deficitRatio = quantity > 0 ? Math.min(1, shortage / quantity) : 0;
+
+  // 1. Calculate days to production if schedule exists
+  let daysToProduction: number | null = null;
+  let scheduleStatus: 'SCHEDULED' | 'UNSCHEDULED' = 'UNSCHEDULED';
+
+  if (productionSchedule && productionSchedule.productionDate) {
+    scheduleStatus = 'SCHEDULED';
+    const targetDate = new Date(productionSchedule.productionDate);
+    if (!isNaN(targetDate.getTime())) {
+      const startOfToday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+      const startOfTarget = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+      daysToProduction = Math.round((startOfTarget.getTime() - startOfToday.getTime()) / 86400000);
+    }
+  }
+
+  // 2. Shortage Risk (0 - 100)
   let shortageRiskScore = 0;
   if (readinessStatus === 'READY') {
     shortageRiskScore = 0;
   } else if (quantity > 0) {
-    const shortage = Math.max(0, quantity - receivedQty);
-    const deficitRatio = Math.min(1, shortage / quantity);
-    
-    // Scale: deficit ratio from 0% to 100% maps to 30..100
     if (shortage === quantity) {
-      shortageRiskScore = 100; // 0 received
+      shortageRiskScore = 100;
       riskReasons.push('Material belum diterima sama sekali (0% pemenuhan)');
+      primaryRiskReason = '0% diterima (Stok kosong)';
     } else {
       shortageRiskScore = Math.round(30 + deficitRatio * 70);
-      riskReasons.push(`Kekurangan material sebesar ${(deficitRatio * 100).toFixed(0)}% dari kebutuhan`);
+      riskReasons.push(`Kekurangan material sebesar ${(deficitRatio * 100).toFixed(0)}% (${shortage.toLocaleString()} unit)`);
+      primaryRiskReason = `Defisit ${(deficitRatio * 100).toFixed(0)}% (-${shortage.toLocaleString()})`;
     }
   }
 
-  // 2. Stale Data Risk (0 - 100)
+  // 3. Stale Data Risk (0 - 100)
   let staleRiskScore = 0;
   if (dataAgeDays === null) {
     staleRiskScore = 40;
@@ -283,21 +306,76 @@ export function evaluateMaterialRisk(
     staleRiskScore = Math.round((dataAgeDays / weights.staleThresholdDays) * 20);
   }
 
-  // 3. Inconsistency / Conflict factor (0 - 100)
+  // 4. Inconsistency / Conflict factor (0 - 100)
   let inconsistencyRiskScore = 0;
   if (readinessStatus === 'CHECK DATA') {
     inconsistencyRiskScore = 90;
     if (conflictReason) {
       riskReasons.push(`Anomali data: ${conflictReason}`);
+      primaryRiskReason = conflictReason;
     }
     mitigations.push('Klarifikasi ketidaksesuaian antara kuantitas fisik dan status keterangan pada spreadsheet');
   }
 
-  // If shortage exists, add concrete PPIC action
-  if (quantity > receivedQty && readinessStatus !== 'READY') {
-    const shortage = quantity - receivedQty;
-    mitigations.push(`Prioritaskan koordinasi pengadaan untuk sisa kekurangan ${shortage.toLocaleString()}`);
-    mitigations.push('Verifikasi jadwal kedatangan berikutnya dari supplier');
+  // 5. Schedule-based Proximity & Overdue Impact
+  let scheduleMultiplier = 1.0;
+  let scheduleOverrideLevel: RiskLevel | null = null;
+
+  if (scheduleStatus === 'SCHEDULED' && daysToProduction !== null) {
+    if (readinessStatus === 'READY') {
+      // Material ready, schedule is safe!
+      riskReasons.push(`Jadwal produksi: ${productionSchedule?.productionDate} (Aman - Material Ready)`);
+      primaryRiskReason = `Aman (Produksi ${productionSchedule?.productionDate})`;
+    } else {
+      // Material NOT READY or CHECK DATA
+      if (daysToProduction < 0) {
+        // OVERDUE PRODUCTION!
+        const overdueDays = Math.abs(daysToProduction);
+        scheduleMultiplier = 1.8;
+        scheduleOverrideLevel = 'CRITICAL';
+        riskReasons.unshift(`🚨 OVERDUE PRODUKSI: Jadwal produksi telah lewat ${overdueDays} hari lalu (${productionSchedule?.productionDate}) dan material masih defisit!`);
+        primaryRiskReason = `🚨 OVERDUE PRODUKSI (${overdueDays} hari lalu)`;
+        mitigations.unshift('Hentikan penundaan! Hubungi supplier darurat atau eskalasi pengadaan hari ini.');
+      } else if (daysToProduction <= 3) {
+        // <= 3 Days remaining (CRITICAL)
+        scheduleMultiplier = 1.6;
+        scheduleOverrideLevel = 'CRITICAL';
+        riskReasons.unshift(`⚠️ MEGET JADWAL: Produksi dalam ${daysToProduction} hari (${productionSchedule?.productionDate}) dengan defisit material!`);
+        primaryRiskReason = `⚠️ Kritis: Produksi dalam ${daysToProduction} hari`;
+        mitigations.unshift('Koordinasi ekspedisi express & prioritaskan line sewing segera setelah tiba.');
+      } else if (daysToProduction <= 7) {
+        // 4 - 7 Days remaining (HIGH)
+        scheduleMultiplier = 1.35;
+        if (!scheduleOverrideLevel || scheduleOverrideLevel === 'LOW' || scheduleOverrideLevel === 'MEDIUM') {
+          scheduleOverrideLevel = 'HIGH';
+        }
+        riskReasons.unshift(`Jadwal produksi mendekat dalam ${daysToProduction} hari (${productionSchedule?.productionDate})`);
+        primaryRiskReason = `Jadwal produksi ${daysToProduction} hari lagi`;
+        mitigations.push('Pastikan kepastian pengiriman supplier minggu ini.');
+      } else if (daysToProduction <= 14) {
+        // 8 - 14 Days remaining (MEDIUM)
+        scheduleMultiplier = 1.1;
+        riskReasons.push(`Jadwal produksi dalam ${daysToProduction} hari (${productionSchedule?.productionDate})`);
+        if (!primaryRiskReason || primaryRiskReason === 'Status normal') {
+          primaryRiskReason = `Jadwal produksi ${daysToProduction} hari lagi`;
+        }
+      } else {
+        // > 14 Days remaining (Plentiful lead time)
+        scheduleMultiplier = 0.85;
+        riskReasons.push(`Jadwal produksi ${daysToProduction} hari lagi (${productionSchedule?.productionDate})`);
+      }
+    }
+  } else {
+    // Unscheduled
+    if (readinessStatus !== 'READY') {
+      riskReasons.push('⚠️ Jadwal produksi belum diatur pada sistem (Perlu Penjadwalan)');
+    }
+  }
+
+  // If shortage exists, add standard mitigations
+  if (shortage > 0 && readinessStatus !== 'READY') {
+    mitigations.push(`Prioritaskan pemenuhan sisa kekurangan ${shortage.toLocaleString()} unit`);
+    mitigations.push('Verifikasi surat jalan & jadwal kedatangan supplier');
   }
 
   // Calculate composite risk with weights normalized to sum 1.0
@@ -306,34 +384,39 @@ export function evaluateMaterialRisk(
   const wStale = weights.staleWeight / totalWeight;
   const wInconsistency = weights.inconsistencyWeight / totalWeight;
 
-  const compositeRiskScore = Math.min(
-    100,
-    Math.max(
-      0,
-      Math.round(
-        shortageRiskScore * wShortage +
-        staleRiskScore * wStale +
-        inconsistencyRiskScore * wInconsistency
-      )
-    )
-  );
+  const baseScore = shortageRiskScore * wShortage + staleRiskScore * wStale + inconsistencyRiskScore * wInconsistency;
+  let compositeRiskScore = Math.min(100, Math.max(0, Math.round(baseScore * scheduleMultiplier)));
+
+  if (readinessStatus === 'READY') {
+    compositeRiskScore = Math.min(15, compositeRiskScore);
+  }
 
   // Map to RiskLevel
   let riskLevel: RiskLevel = 'LOW';
   let followUpPriority: 'P1 - Segera' | 'P2 - Tinggi' | 'P3 - Sedang' | 'P4 - Rutin' = 'P4 - Rutin';
 
-  if (compositeRiskScore >= 75 || (readinessStatus === 'NOT READY' && shortageRiskScore >= 80)) {
+  if (scheduleOverrideLevel === 'CRITICAL' || compositeRiskScore >= 75 || (readinessStatus === 'NOT READY' && shortageRiskScore >= 80 && (daysToProduction === null || daysToProduction <= 7))) {
     riskLevel = 'CRITICAL';
     followUpPriority = 'P1 - Segera';
-  } else if (compositeRiskScore >= 50 || readinessStatus === 'NOT READY') {
+    if (!primaryRiskReason || primaryRiskReason === 'Status normal') {
+      primaryRiskReason = `Defisit Kritis (${shortage.toLocaleString()})`;
+    }
+  } else if (scheduleOverrideLevel === 'HIGH' || compositeRiskScore >= 50 || readinessStatus === 'NOT READY') {
     riskLevel = 'HIGH';
     followUpPriority = 'P2 - Tinggi';
+    if (!primaryRiskReason || primaryRiskReason === 'Status normal') {
+      primaryRiskReason = `Kekurangan ${shortage.toLocaleString()}`;
+    }
   } else if (compositeRiskScore >= 25 || readinessStatus === 'CHECK DATA' || staleRiskScore >= 50) {
     riskLevel = 'MEDIUM';
     followUpPriority = 'P3 - Sedang';
+    if (!primaryRiskReason || primaryRiskReason === 'Status normal') {
+      primaryRiskReason = conflictReason || 'Perlu pemantauan';
+    }
   } else {
     riskLevel = 'LOW';
     followUpPriority = 'P4 - Rutin';
+    primaryRiskReason = 'Aman / Terpenuhi';
   }
 
   if (mitigations.length === 0) {
@@ -346,8 +429,11 @@ export function evaluateMaterialRisk(
     compositeRiskScore,
     riskLevel,
     riskReasons,
+    primaryRiskReason,
     recommendedMitigations: Array.from(new Set(mitigations)),
     followUpPriority,
+    daysToProduction,
+    scheduleStatus,
   };
 }
 
@@ -357,7 +443,8 @@ export function evaluateMaterialRisk(
 export function parseRawRow(
   raw: RawSheetRow,
   weights: RiskWeightsConfig,
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  productionSchedule?: ProductionSchedule | null
 ): ParsedMaterialItem {
   const { code, name } = extractMaterialCodeAndName(raw.productDisplayName);
   const quantity = Math.max(0, parseNumeric(raw.quantityRaw));
@@ -367,11 +454,9 @@ export function parseRawRow(
   const calculatedShortage = Math.max(0, quantity - receivedQty);
   const calculatedSurplus = Math.max(0, receivedQty - quantity);
 
-  // Check formula discrepancy in Column H:
-  // In many sheets, Balance is either (Received - Qty) => negative if shortage, or (Qty - Received) => positive if shortage.
-  // We check if recordedBalance matches either convention.
-  const conventionA = receivedQty - quantity; // negative for shortage
-  const conventionB = quantity - receivedQty; // positive for shortage
+  // Check formula discrepancy in Column H
+  const conventionA = receivedQty - quantity;
+  const conventionB = quantity - receivedQty;
   const diffA = Math.abs(recordedBalance - conventionA);
   const diffB = Math.abs(recordedBalance - conventionB);
   const isDirectMatch = recordedBalance === 0 && calculatedShortage === 0;
@@ -396,7 +481,7 @@ export function parseRawRow(
     validationWarnings.push(conflictReason);
   }
 
-  // Date parsing
+  // Date parsing (Kolom D)
   const updateDate = parseSheetDate(raw.updateDateRaw);
   const dataAgeDays = calculateDataAgeDays(updateDate, referenceDate);
   const isStale = dataAgeDays !== null && dataAgeDays > weights.staleThresholdDays;
@@ -413,14 +498,16 @@ export function parseRawRow(
     validationWarnings.push(`Format tanggal '${raw.updateDateRaw}' tidak standar`);
   }
 
-  // Risk evaluation
+  // Risk evaluation with production schedule
   const risk = evaluateMaterialRisk(
     quantity,
     receivedQty,
     readinessStatus,
     dataAgeDays,
     weights,
-    conflictReason
+    conflictReason,
+    productionSchedule,
+    referenceDate
   );
 
   const normalizedUnit = (raw.unit || '').trim().toUpperCase() || 'UNIT';
@@ -449,14 +536,166 @@ export function parseRawRow(
     isStale,
     hasDiscrepancy,
     validationWarnings,
+    productionSchedule: productionSchedule || null,
+    daysToProduction: risk.daysToProduction,
+    scheduleStatus: risk.scheduleStatus,
     shortageRiskScore: risk.shortageRiskScore,
     staleRiskScore: risk.staleRiskScore,
     compositeRiskScore: risk.compositeRiskScore,
     riskLevel: risk.riskLevel,
     riskReasons: risk.riskReasons,
+    primaryRiskReason: risk.primaryRiskReason,
     recommendedMitigations: risk.recommendedMitigations,
     followUpPriority: risk.followUpPriority,
   };
+}
+
+/**
+ * Filters material rows so that for each unique OR + Material combination,
+ * only the row(s) with the most recent updateDate are preserved.
+ *
+ * Rules:
+ * - Group key: `${orNumber}___${materialCode}` (fallback: productDisplayName).
+ * - If multiple rows exist for the same material in the same OR:
+ *   - Sort by updateDate descending (with valid dates taking precedence over null/invalid dates).
+ *   - Keep only the rows matching the latest updateDate.
+ * - Distinct materials within the same OR are ALWAYS preserved (e.g., fabric vs thread vs buttons).
+ * - Distinct ORs are ALWAYS preserved.
+ * - If a material has no valid update date at all, it is retained (with a validation flag) so data is never silently dropped.
+ */
+export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): ParsedMaterialItem[] {
+  if (!items || items.length <= 1) return items;
+
+  // Group by OR and Material Code
+  const groups = new Map<string, ParsedMaterialItem[]>();
+
+  for (const item of items) {
+    const orKey = (item.orNumber || '-').trim().toUpperCase();
+    const codeKey = (item.materialCode && item.materialCode !== '-' ? item.materialCode : item.productDisplayName || '-').trim().toUpperCase();
+    const groupKey = `${orKey}___${codeKey}`;
+
+    let list = groups.get(groupKey);
+    if (!list) {
+      list = [];
+      groups.set(groupKey, list);
+    }
+    list.push(item);
+  }
+
+  const result: ParsedMaterialItem[] = [];
+
+  for (const list of groups.values()) {
+    if (list.length === 1) {
+      result.push(list[0]);
+      continue;
+    }
+
+    // Multiple rows for this OR + Material pair.
+    // Find the latest valid date timestamp
+    let maxTime: number | null = null;
+    for (const item of list) {
+      if (item.updateDate instanceof Date && !isNaN(item.updateDate.getTime())) {
+        const t = item.updateDate.getTime();
+        if (maxTime === null || t > maxTime) {
+          maxTime = t;
+        }
+      }
+    }
+
+    if (maxTime !== null) {
+      // Keep only rows matching the latest timestamp
+      const latestRows = list.filter(
+        (item) => item.updateDate instanceof Date && !isNaN(item.updateDate.getTime()) && item.updateDate.getTime() === maxTime
+      );
+      if (latestRows.length > 0) {
+        result.push(...latestRows);
+        continue;
+      }
+    }
+
+    // If no valid dates at all, pick the last row by rowIndex
+    const latestRowIndex = Math.max(...list.map((i) => i.rowIndex));
+    const fallbackRow = list.find((i) => i.rowIndex === latestRowIndex) || list[list.length - 1];
+    result.push(fallbackRow);
+  }
+
+  // Sort by original rowIndex ascending to keep natural spreadsheet flow
+  return result.sort((a, b) => a.rowIndex - b.rowIndex);
+}
+
+/**
+ * Enriches items with Production Schedules, Follow-Up statuses, and dynamic risk re-calculation.
+ */
+export function enrichItemsWithSchedulesAndFollowUps(
+  items: ParsedMaterialItem[],
+  schedules: ProductionSchedule[],
+  followUps: Record<string, MaterialFollowUp>,
+  weights: RiskWeightsConfig,
+  referenceDate: Date = new Date()
+): ParsedMaterialItem[] {
+  if (!items || items.length === 0) return [];
+
+  // Index schedules by OR + materialCode (specific) and OR (generic)
+  const scheduleByOrAndMat = new Map<string, ProductionSchedule>();
+  const scheduleByOrOnly = new Map<string, ProductionSchedule>();
+
+  for (const s of schedules) {
+    const orKey = (s.orNumber || '').trim().toUpperCase();
+    if (!orKey) continue;
+
+    if (s.materialCode && s.materialCode.trim()) {
+      const matKey = `${orKey}___${s.materialCode.trim().toUpperCase()}`;
+      scheduleByOrAndMat.set(matKey, s);
+    } else {
+      // General OR schedule
+      scheduleByOrOnly.set(orKey, s);
+    }
+  }
+
+  return items.map((item) => {
+    const orKey = (item.orNumber || '').trim().toUpperCase();
+    const matKey = `${orKey}___${(item.materialCode || '').trim().toUpperCase()}`;
+
+    // Find schedule: specific material schedule takes precedence, then OR schedule
+    const sched = scheduleByOrAndMat.get(matKey) || scheduleByOrOnly.get(orKey) || null;
+
+    // Find follow-up record
+    const followUp = followUps[matKey] || {
+      materialKey: matKey,
+      orNumber: item.orNumber,
+      materialCode: item.materialCode,
+      isFollowedUp: false,
+      followedUpAt: null,
+    };
+
+    // Re-evaluate risk with current schedule
+    const risk = evaluateMaterialRisk(
+      item.quantity,
+      item.receivedQty,
+      item.readinessStatus,
+      item.dataAgeDays,
+      weights,
+      item.statusConflictReason,
+      sched,
+      referenceDate
+    );
+
+    return {
+      ...item,
+      productionSchedule: sched,
+      daysToProduction: risk.daysToProduction,
+      scheduleStatus: risk.scheduleStatus,
+      followUp,
+      shortageRiskScore: risk.shortageRiskScore,
+      staleRiskScore: risk.staleRiskScore,
+      compositeRiskScore: risk.compositeRiskScore,
+      riskLevel: risk.riskLevel,
+      riskReasons: risk.riskReasons,
+      primaryRiskReason: risk.primaryRiskReason,
+      recommendedMitigations: risk.recommendedMitigations,
+      followUpPriority: risk.followUpPriority,
+    };
+  });
 }
 
 /**

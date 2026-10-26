@@ -1,7 +1,8 @@
 /**
  * Material Readiness & Risk Monitoring Dashboard (PPIC)
  * Single Source of Truth: Google Sheets (Sheet "Rekap")
- * Performance Optimized: Zero-tick root renders, memoized KPIs, fast FCP.
+ * Performance Optimized: Fingerprint-based auto-sync, memory leak guards,
+ * Production Schedule integration, and Critical Bell Notifications.
  * @license Apache-2.0
  */
 
@@ -13,17 +14,33 @@ import {
   ParsedMaterialItem,
   PpicDashboardKpi,
   SyncLogEntry,
+  ProductionSchedule,
+  MaterialFollowUp,
 } from './types/ppic';
-import { calculateDashboardKpi } from './utils/ppicCalculations';
+import {
+  calculateDashboardKpi,
+  filterLatestMaterialUpdates,
+  enrichItemsWithSchedulesAndFollowUps,
+} from './utils/ppicCalculations';
+import {
+  loadProductionSchedules,
+  upsertProductionSchedule,
+  deleteProductionSchedule,
+  loadFollowUps,
+  toggleMaterialFollowUp,
+  syncDataToAppsScript,
+} from './services/scheduleAndFollowUpService';
 
 import { Navbar } from './components/Navbar';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { OverviewView } from './components/OverviewView';
 import { ReadinessView } from './components/ReadinessView';
 import { RiskAnalysisView } from './components/RiskAnalysisView';
+import { ProductionScheduleView } from './components/ProductionScheduleView';
 import { SyncStatusView } from './components/SyncStatusView';
 import { SettingsView } from './components/SettingsView';
 import { MaterialDetailModal } from './components/MaterialDetailModal';
+import { CriticalNotificationModal } from './components/CriticalNotificationModal';
 import {
   AlertTriangle,
   Link2,
@@ -90,8 +107,16 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
 
-  // Sync and Data state
-  const [items, setItems] = useState<ParsedMaterialItem[]>([]);
+  // Raw items from spreadsheet/demo
+  const [rawItems, setRawItems] = useState<ParsedMaterialItem[]>([]);
+  // Schedules & Follow-Up persisted state
+  const [schedules, setSchedules] = useState<ProductionSchedule[]>(() => loadProductionSchedules());
+  const [followUps, setFollowUps] = useState<Record<string, MaterialFollowUp>>(() => loadFollowUps());
+
+  // Critical Notification Modal
+  const [isCriticalModalOpen, setIsCriticalModalOpen] = useState(false);
+
+  // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -109,14 +134,16 @@ export default function App() {
   // Modal inspection
   const [selectedMaterial, setSelectedMaterial] = useState<ParsedMaterialItem | null>(null);
 
-  // Guard against concurrent fetch calls
+  // Guard against concurrent fetch calls and memory leak
   const isSyncingRef = useRef(false);
+  const lastFingerprintRef = useRef<string>('');
 
   const showToast = useCallback((text: string, type: 'success' | 'error') => {
     setToastMessage({ text, type });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToastMessage(null);
     }, 4000);
+    return () => clearTimeout(timer);
   }, []);
 
   const updateSettings = useCallback((newSettings: AppSettings) => {
@@ -128,7 +155,7 @@ export default function App() {
     }
   }, []);
 
-  // Main Data Synchronization Routine
+  // Main Data Synchronization Routine with Fingerprint Compare (Prevents GC thrashing & memory leaks)
   const syncData = useCallback(async () => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
@@ -139,7 +166,13 @@ export default function App() {
     // Case 1: Demo mode
     if (settings.useDemoData) {
       const demoItems = getDemoMaterialItems(settings.riskWeights);
-      setItems(demoItems);
+      const demoFingerprint = `DEMO:${demoItems.length}:${demoItems[0]?.id || ''}`;
+
+      if (demoFingerprint !== lastFingerprintRef.current) {
+        lastFingerprintRef.current = demoFingerprint;
+        setRawItems(demoItems);
+      }
+
       setLastSyncTime(new Date());
       setIsSyncing(false);
       isSyncingRef.current = false;
@@ -162,7 +195,7 @@ export default function App() {
     if (!cleanId && !settings.appsScriptUrl) {
       setIsSyncing(false);
       isSyncingRef.current = false;
-      setItems([]);
+      setRawItems([]);
       setLastError(
         'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk membaca data.'
       );
@@ -178,7 +211,16 @@ export default function App() {
         customMapping: settings.columnMapping,
       });
 
-      setItems(result.items);
+      // Compute lightweight data fingerprint to check if sheet changed
+      const firstRow = result.items[0];
+      const lastRow = result.items[result.items.length - 1];
+      const newFingerprint = `${result.items.length}:${firstRow?.id || ''}_${firstRow?.updateDateFormatted || ''}:${lastRow?.id || ''}_${lastRow?.receivedQty || ''}`;
+
+      if (newFingerprint !== lastFingerprintRef.current) {
+        lastFingerprintRef.current = newFingerprint;
+        setRawItems(result.items);
+      }
+
       setDetectedHeaders(result.detectedHeaders);
       setAvailableSheets(result.availableSheets);
       setLastSyncTime(new Date());
@@ -203,7 +245,7 @@ export default function App() {
           : 'Gagal menyinkronkan data Google Sheets';
 
       setLastError(errMsg);
-      setItems([]);
+      setRawItems([]);
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
@@ -232,7 +274,7 @@ export default function App() {
     syncData();
   }, [syncData]);
 
-  // Auto-sync interval: runs quietly at specified frequency without 1-second React re-renders!
+  // Auto-sync interval
   useEffect(() => {
     if (!settings.autoSyncEnabled || settings.useDemoData) return;
 
@@ -244,56 +286,149 @@ export default function App() {
     return () => clearInterval(timer);
   }, [settings.autoSyncEnabled, settings.useDemoData, settings.syncIntervalSeconds, syncData]);
 
+  // DEDUPLICATED & ENRICHED MATERIAL ITEMS (Requirement 4 & Requirement 3)
+  // Only the most recent valid update for each unique OR + material combination is used.
+  const items = useMemo(() => {
+    // Step 1: Filter out obsolete updates per OR + Material
+    const latestItems = filterLatestMaterialUpdates(rawItems);
+    // Step 2: Enrich with production schedule, remaining days, and follow-up status
+    return enrichItemsWithSchedulesAndFollowUps(
+      latestItems,
+      schedules,
+      followUps,
+      settings.riskWeights
+    );
+  }, [rawItems, schedules, followUps, settings.riskWeights]);
+
+  // Memoized KPI calculation: Only runs when items array actually changes!
+  const kpi: PpicDashboardKpi = useMemo(() => calculateDashboardKpi(items), [items]);
+
+  // Critical items for bell notification
+  const criticalItems = useMemo(() => {
+    return items.filter((i) => i.riskLevel === 'CRITICAL');
+  }, [items]);
+
+  // Production Schedule Handlers (Requirement 2)
+  const handleSaveSchedule = useCallback(
+    (
+      data: {
+        orNumber: string;
+        productionDate: string;
+        materialCode?: string;
+        materialName?: string;
+        requiredQty?: number;
+        notes?: string;
+        leadTimeDays?: number;
+      },
+      existingId?: string
+    ) => {
+      const res = upsertProductionSchedule(data, existingId);
+      if (res.success && res.item) {
+        setSchedules(loadProductionSchedules());
+        showToast(res.message, 'success');
+      } else {
+        showToast(res.message, 'error');
+      }
+      return res;
+    },
+    [showToast]
+  );
+
+  const handleDeleteSchedule = useCallback(
+    (id: string) => {
+      const res = deleteProductionSchedule(id);
+      if (res.success) {
+        setSchedules(loadProductionSchedules());
+        showToast(res.message, 'success');
+      } else {
+        showToast(res.message, 'error');
+      }
+      return res;
+    },
+    [showToast]
+  );
+
+  // Follow-Up Toggle Handler (Requirement 5)
+  const handleToggleFollowUp = useCallback(
+    (item: ParsedMaterialItem) => {
+      const matKey = `${(item.orNumber || '').trim().toUpperCase()}___${(item.materialCode || '').trim().toUpperCase()}`;
+      const updated = toggleMaterialFollowUp(matKey, item.orNumber, item.materialCode);
+      setFollowUps(loadFollowUps());
+      showToast(
+        updated.isFollowedUp
+          ? `Status ${item.materialCode} (${item.orNumber}) ditandai Sudah Follow-up.`
+          : `Status ${item.materialCode} (${item.orNumber}) diubah menjadi Belum Follow-up.`,
+        'success'
+      );
+    },
+    [showToast]
+  );
+
+  // Sync to Google Sheets via Apps Script
+  const handleSyncSchedulesToSheets = useCallback(async () => {
+    if (!settings.appsScriptUrl) {
+      return { success: false, message: 'URL Google Apps Script belum diisi di Pengaturan.' };
+    }
+    const res = await syncDataToAppsScript(settings.appsScriptUrl, { schedules, followUps });
+    return res;
+  }, [settings.appsScriptUrl, schedules, followUps]);
+
   const handleToggleDemoMode = useCallback(() => {
     const nextVal = !settings.useDemoData;
     const newSettings = { ...settings, useDemoData: nextVal };
     updateSettings(newSettings);
     if (!nextVal && !newSettings.spreadsheetId) {
-      setItems([]);
+      setRawItems([]);
       setActiveTab('settings');
     }
   }, [settings, updateSettings]);
 
   // Quick connect handler
-  const handleQuickConnect = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickSheetUrl.trim()) return;
-    const cleanId = extractSpreadsheetId(quickSheetUrl);
-    const newSettings: AppSettings = {
-      ...settings,
-      spreadsheetId: cleanId,
-      useDemoData: false,
-    };
-    updateSettings(newSettings);
-    showToast('Menghubungkan ke Google Sheets...', 'success');
-  }, [quickSheetUrl, settings, updateSettings, showToast]);
+  const handleQuickConnect = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!quickSheetUrl.trim()) return;
+      const cleanId = extractSpreadsheetId(quickSheetUrl);
+      const newSettings: AppSettings = {
+        ...settings,
+        spreadsheetId: cleanId,
+        useDemoData: false,
+      };
+      updateSettings(newSettings);
+      showToast('Menghubungkan ke Google Sheets...', 'success');
+    },
+    [quickSheetUrl, settings, updateSettings, showToast]
+  );
 
   // Test connection button in settings
-  const handleTestConnection = useCallback(async (testId: string, testSheet: string) => {
-    setIsTestingConnection(true);
-    setLastError(null);
-    try {
-      const res = await fetchLiveSheetData({
-        spreadsheetId: extractSpreadsheetId(testId),
-        sheetName: testSheet || 'Rekap',
-        appsScriptUrl: settings.appsScriptUrl,
-        weights: settings.riskWeights,
-        customMapping: settings.columnMapping,
-      });
-      setItems(res.items);
-      setLastSyncTime(new Date());
-      showToast(`Koneksi Berhasil! Terbaca ${res.items.length} baris material dari sheet '${res.activeSheetName}'.`, 'success');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Koneksi gagal.';
-      setLastError(msg);
-      showToast(`Koneksi Gagal: ${msg}`, 'error');
-    } finally {
-      setIsTestingConnection(false);
-    }
-  }, [settings.appsScriptUrl, settings.riskWeights, settings.columnMapping, showToast]);
-
-  // Memoized KPI calculation: Only runs when items array actually changes!
-  const kpi: PpicDashboardKpi = useMemo(() => calculateDashboardKpi(items), [items]);
+  const handleTestConnection = useCallback(
+    async (testId: string, testSheet: string) => {
+      setIsTestingConnection(true);
+      setLastError(null);
+      try {
+        const res = await fetchLiveSheetData({
+          spreadsheetId: extractSpreadsheetId(testId),
+          sheetName: testSheet || 'Rekap',
+          appsScriptUrl: settings.appsScriptUrl,
+          weights: settings.riskWeights,
+          customMapping: settings.columnMapping,
+        });
+        setRawItems(res.items);
+        setLastSyncTime(new Date());
+        showToast(
+          `Koneksi Berhasil! Terbaca ${res.items.length} baris material dari sheet '${res.activeSheetName}'.`,
+          'success'
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Koneksi gagal.';
+        setLastError(msg);
+        showToast(`Koneksi Gagal: ${msg}`, 'error');
+      } finally {
+        setIsTestingConnection(false);
+      }
+    },
+    [settings.appsScriptUrl, settings.riskWeights, settings.columnMapping, showToast]
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
@@ -315,7 +450,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar */}
+      {/* Top Navbar with Critical Bell Notification */}
       <Navbar
         isSyncing={isSyncing}
         onManualRefresh={syncData}
@@ -326,6 +461,8 @@ export default function App() {
         onToggleDemoMode={handleToggleDemoMode}
         spreadsheetId={settings.spreadsheetId}
         sheetName={settings.sheetName}
+        criticalCount={criticalItems.length}
+        onOpenCriticalNotifications={() => setIsCriticalModalOpen(true)}
       />
 
       {/* Mode Banner */}
@@ -336,7 +473,7 @@ export default function App() {
               SIMULASI DEMO AKTIF
             </span>
             <span>
-              Menampilkan data simulasi pabrik garmen. Ingin melihat data dari Google Sheets Anda sendiri?
+              Menampilkan data simulasi pabrik garmen terintegrasi jadwal &amp; notifikasi kritis. Ingin melihat data Google Sheets sendiri?
             </span>
           </div>
           <button
@@ -464,6 +601,7 @@ export default function App() {
                 items={items}
                 staleThresholdDays={settings.staleThresholdDays}
                 onSelectMaterial={setSelectedMaterial}
+                onToggleFollowUp={handleToggleFollowUp}
               />
             )}
           </ErrorBoundary>
@@ -474,6 +612,21 @@ export default function App() {
                 items={items}
                 riskWeights={settings.riskWeights}
                 onSelectMaterial={setSelectedMaterial}
+              />
+            )}
+          </ErrorBoundary>
+
+          {/* Dedicated Production Schedule View (Requirement 2) */}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Manajemen Jadwal Produksi">
+            {activeTab === 'schedule' && (
+              <ProductionScheduleView
+                schedules={schedules}
+                items={items}
+                appsScriptUrl={settings.appsScriptUrl}
+                onSaveSchedule={handleSaveSchedule}
+                onDeleteSchedule={handleDeleteSchedule}
+                onSyncToGoogleSheets={handleSyncSchedulesToSheets}
+                onNavigateToTab={(tab) => setActiveTab(tab)}
               />
             )}
           </ErrorBoundary>
@@ -515,6 +668,19 @@ export default function App() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Critical Notification Bell Modal (Requirement 1) */}
+      <CriticalNotificationModal
+        isOpen={isCriticalModalOpen}
+        onClose={() => setIsCriticalModalOpen(false)}
+        criticalItems={criticalItems}
+        onSelectMaterial={setSelectedMaterial}
+        onToggleFollowUp={handleToggleFollowUp}
+        onNavigateToSchedule={() => {
+          setIsCriticalModalOpen(false);
+          setActiveTab('schedule');
+        }}
+      />
 
       {/* Material Detail Drawer / Modal */}
       <MaterialDetailModal

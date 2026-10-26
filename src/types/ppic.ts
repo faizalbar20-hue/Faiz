@@ -19,6 +19,28 @@ export interface RawSheetRow {
   ketRaw: string; // Kolom J (Keterangan / Ket status sumber)
 }
 
+export interface ProductionSchedule {
+  id: string;
+  orNumber: string;
+  productionDate: string; // YYYY-MM-DD
+  materialCode?: string;
+  materialName?: string;
+  requiredQty?: number;
+  notes?: string;
+  leadTimeDays?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaterialFollowUp {
+  materialKey: string; // `${orNumber}___${materialCode}`
+  orNumber: string;
+  materialCode: string;
+  isFollowedUp: boolean;
+  followedUpAt: string | null; // ISO Date String
+  notes?: string;
+}
+
 export interface ParsedMaterialItem {
   id: string; // generated unique id: or-style-code-row
   rowIndex: number;
@@ -52,12 +74,21 @@ export interface ParsedMaterialItem {
   hasDiscrepancy: boolean; // Selisih kolom H berbeda dengan hitungan
   validationWarnings: string[];
 
+  // Production Schedule Integration
+  productionSchedule?: ProductionSchedule | null;
+  daysToProduction?: number | null; // Selisih hari menuju tanggal produksi (targetDate - today)
+  scheduleStatus?: 'SCHEDULED' | 'UNSCHEDULED';
+
+  // Follow-Up tracking
+  followUp?: MaterialFollowUp;
+
   // Risk Evaluation
   shortageRiskScore: number; // 0 - 100
   staleRiskScore: number; // 0 - 100
   compositeRiskScore: number; // 0 - 100
   riskLevel: RiskLevel;
   riskReasons: string[];
+  primaryRiskReason?: string;
   recommendedMitigations: string[];
   followUpPriority: 'P1 - Segera' | 'P2 - Tinggi' | 'P3 - Sedang' | 'P4 - Rutin';
 }

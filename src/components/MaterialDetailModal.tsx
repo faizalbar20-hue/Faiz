@@ -133,6 +133,61 @@ export const MaterialDetailModal: React.FC<MaterialDetailModalProps> = ({
             </div>
           </div>
 
+          {/* Production Schedule & Follow-up Section */}
+          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1.5 font-bold text-slate-900 uppercase tracking-wider text-xs">
+                <Calendar className="w-4 h-4 text-blue-600" />
+                <span>Jadwal Produksi &amp; Status Follow-Up PPIC</span>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                  item.followUp?.isFollowedUp
+                    ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
+                    : 'bg-amber-100 border-amber-300 text-amber-900'
+                }`}
+              >
+                {item.followUp?.isFollowedUp ? '✓ SUDAH FOLLOW-UP' : 'BELUM FOLLOW-UP'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block font-medium">Jadwal Produksi OR</span>
+                <span className="font-bold text-slate-900 text-xs">
+                  {item.productionSchedule?.productionDate || 'Belum diatur (Perlu Penjadwalan)'}
+                </span>
+                {item.daysToProduction !== null && item.daysToProduction !== undefined && (
+                  <span
+                    className={`block text-[10px] font-semibold mt-0.5 ${
+                      item.daysToProduction < 0
+                        ? 'text-red-600 font-black'
+                        : item.daysToProduction <= 3
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {item.daysToProduction < 0
+                      ? `🚨 Overdue ${Math.abs(item.daysToProduction)} hari lalu`
+                      : `Sisa waktu: ${item.daysToProduction} hari lagi`}
+                  </span>
+                )}
+              </div>
+
+              <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block font-medium">Keterangan Risiko Jadwal</span>
+                <span className="text-xs font-semibold text-slate-700 block">
+                  {item.primaryRiskReason || 'Normal'}
+                </span>
+                {item.followUp?.followedUpAt && (
+                  <span className="block text-[10px] text-slate-400 mt-0.5">
+                    Follow-up pada: {new Date(item.followUp.followedUpAt).toLocaleString('id-ID')}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Quantity & Formula Inspection */}
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
             <div className="flex items-center justify-between">

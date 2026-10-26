@@ -7,10 +7,11 @@ import {
   Settings,
   ShieldAlert,
   Info,
+  Calendar,
 } from 'lucide-react';
 import { PpicDashboardKpi } from '../types/ppic';
 
-export type ActiveTab = 'overview' | 'readiness' | 'risk' | 'sync' | 'settings';
+export type ActiveTab = 'overview' | 'readiness' | 'risk' | 'schedule' | 'sync' | 'settings';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -42,6 +43,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, kpi })
       icon: ShieldAlert,
       badge: kpi.criticalRiskCount > 0 ? `${kpi.criticalRiskCount} Kritis` : null,
       badgeColor: 'bg-red-100 text-red-800 border-red-200',
+    },
+    {
+      id: 'schedule' as ActiveTab,
+      label: 'Jadwal Produksi',
+      sublabel: 'Input & Waktu OR',
+      icon: Calendar,
+      badge: null,
     },
     {
       id: 'sync' as ActiveTab,

@@ -208,16 +208,16 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Total Items */}
+        {/* Total Material (Unik & Terkini) */}
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-500">
-            <span className="text-xs font-medium uppercase tracking-wider">Total Baris Material</span>
-            <Boxes className="w-4 h-4 text-slate-400" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-700">Total Material</span>
+            <Boxes className="w-4 h-4 text-blue-600" />
           </div>
           <div className="mt-2">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">{activeKpi.totalRows}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">{activeKpi.uniqueMaterialsCount}</div>
             <div className="text-[11px] text-slate-500 mt-0.5">
-              {activeKpi.uniqueMaterialsCount} kode unik material
+              Kode material unik pada {activeKpi.affectedOrCount} OR
             </div>
           </div>
         </div>
