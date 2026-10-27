@@ -136,6 +136,7 @@ export default function App() {
 
   // Guard against concurrent fetch calls and memory leak
   const isSyncingRef = useRef(false);
+  const inFlightAbortControllerRef = useRef<AbortController | null>(null);
   const lastFingerprintRef = useRef<string>('');
 
   const showToast = useCallback((text: string, type: 'success' | 'error') => {
@@ -155,13 +156,23 @@ export default function App() {
     }
   }, []);
 
-  // Main Data Synchronization Routine with Fingerprint Compare (Prevents GC thrashing & memory leaks)
-  const syncData = useCallback(async () => {
-    if (isSyncingRef.current) return;
+  // Main Data Synchronization Routine with Fingerprint Compare & Concurrency Control
+  const syncData = useCallback(async (isManual = false) => {
+    // If an auto-sync fires while a sync is already in flight, skip to avoid request pile-up
+    if (isSyncingRef.current && !isManual) {
+      return;
+    }
+
+    // If manual refresh requested while previous request is running, abort previous one safely
+    if (inFlightAbortControllerRef.current) {
+      inFlightAbortControllerRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    inFlightAbortControllerRef.current = abortController;
     isSyncingRef.current = true;
     const startTime = Date.now();
     setIsSyncing(true);
-    setLastError(null);
 
     // Case 1: Demo mode
     if (settings.useDemoData) {
@@ -174,8 +185,10 @@ export default function App() {
       }
 
       setLastSyncTime(new Date());
+      setLastError(null);
       setIsSyncing(false);
       isSyncingRef.current = false;
+      inFlightAbortControllerRef.current = null;
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
@@ -195,7 +208,7 @@ export default function App() {
     if (!cleanId && !settings.appsScriptUrl) {
       setIsSyncing(false);
       isSyncingRef.current = false;
-      setRawItems([]);
+      inFlightAbortControllerRef.current = null;
       setLastError(
         'Spreadsheet ID belum diisi. Masukkan URL atau ID Google Sheets Anda pada form di bawah ini untuk membaca data.'
       );
@@ -209,6 +222,7 @@ export default function App() {
         appsScriptUrl: settings.appsScriptUrl,
         weights: settings.riskWeights,
         customMapping: settings.columnMapping,
+        signal: abortController.signal,
       });
 
       // Compute robust data fingerprint to immediately detect newly appended rows and cell edits
@@ -241,6 +255,11 @@ export default function App() {
       };
       setSyncLogs((prev) => [log, ...prev.slice(0, 19)]);
     } catch (err: unknown) {
+      // If manually aborted due to a newer request, do not treat as user error
+      if (abortController.signal.aborted && (err as { code?: string })?.code === 'ABORTED') {
+        return;
+      }
+
       const errMsg =
         err instanceof SheetsApiError
           ? err.message
@@ -249,7 +268,8 @@ export default function App() {
           : 'Gagal menyinkronkan data Google Sheets';
 
       setLastError(errMsg);
-      setRawItems([]);
+      // Requirement 6: Maintain the last successfully loaded data instead of wiping it out!
+      // Do NOT call setRawItems([]); keep existing state intact.
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
@@ -261,8 +281,11 @@ export default function App() {
       };
       setSyncLogs((prev) => [log, ...prev.slice(0, 19)]);
     } finally {
-      setIsSyncing(false);
-      isSyncingRef.current = false;
+      if (inFlightAbortControllerRef.current === abortController) {
+        inFlightAbortControllerRef.current = null;
+        setIsSyncing(false);
+        isSyncingRef.current = false;
+      }
     }
   }, [
     settings.useDemoData,
@@ -272,6 +295,15 @@ export default function App() {
     settings.riskWeights,
     settings.columnMapping,
   ]);
+
+  // Cleanup in-flight requests on unmount
+  useEffect(() => {
+    return () => {
+      if (inFlightAbortControllerRef.current) {
+        inFlightAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -284,7 +316,7 @@ export default function App() {
 
     const intervalMs = Math.max(10, settings.syncIntervalSeconds) * 1000;
     const timer = setInterval(() => {
-      syncData();
+      syncData(false);
     }, intervalMs);
 
     return () => clearInterval(timer);
@@ -507,6 +539,29 @@ export default function App() {
             className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
           >
             Ubah Pengaturan Sheet
+          </button>
+        </div>
+      )}
+
+      {/* Stale / Failed Sync Alert Banner when previous data is retained */}
+      {!settings.useDemoData && lastError && items.length > 0 && (
+        <div className="bg-amber-500/15 border-b border-amber-400 text-amber-950 px-4 py-2.5 text-xs flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+            <div>
+              <span className="font-bold text-amber-900">Perhatian: Data Belum Diperbarui. </span>
+              <span className="text-amber-800">
+                Gagal sinkronisasi terbaru ({lastError}). Menampilkan data terakhir yang berhasil dimuat
+                {lastSyncTime ? ` pada ${lastSyncTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}.
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => syncData(true)}
+            disabled={isSyncing}
+            className="px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white font-semibold rounded text-[11px] shadow-xs transition disabled:opacity-50 shrink-0 flex items-center space-x-1"
+          >
+            <span>{isSyncing ? 'Mencoba...' : 'Coba Sinkronkan Ulang'}</span>
           </button>
         </div>
       )}

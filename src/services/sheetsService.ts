@@ -46,14 +46,30 @@ export function extractSpreadsheetId(input: string): string {
 }
 
 /**
+ * Extracts optional gid (sheet ID) from URL if present.
+ */
+export function extractGid(input: string): string | null {
+  if (!input) return null;
+  const match = input.match(/[#&?]gid=([0-9]+)/);
+  return match ? match[1] : null;
+}
+
+export interface FetchSheetOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+/**
  * Fetches sheet data via Google Visualization API CSV export.
  * Does not require OAuth popup; works as long as the spreadsheet has link sharing enabled.
+ * Uses simple CORS GET request without custom headers to avoid CORS OPTIONS preflights.
  */
 export async function fetchSheetViaGViz(
   spreadsheetId: string,
   sheetName: string,
   weights: RiskWeightsConfig,
-  customMapping?: ColumnMappingConfig
+  customMapping?: ColumnMappingConfig,
+  options?: FetchSheetOptions
 ): Promise<SheetFetchResult> {
   const cleanId = extractSpreadsheetId(spreadsheetId);
   if (!cleanId) {
@@ -61,36 +77,64 @@ export async function fetchSheetViaGViz(
   }
 
   const targetSheet = sheetName.trim() || 'Rekap';
-  // GViz endpoint for CSV output with cache-busting timestamp
+  const extractedGid = extractGid(spreadsheetId);
+  const timeoutMs = options?.timeoutMs ?? 15000;
+
+  // Build GViz query URL with cache-busting timestamp
   const timestamp = Date.now();
-  const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}&_t=${timestamp}`;
+  let url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}&_t=${timestamp}`;
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onExternalAbort = () => {
+    controller.abort();
+  };
+
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timeoutId);
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
 
   let response: Response;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
-
   try {
+    // Note: Do NOT add custom non-safelisted headers like 'Cache-Control' or 'Pragma' here!
+    // Adding non-safelisted headers forces browsers to send an OPTIONS preflight request.
+    // Google Sheets GViz endpoints do NOT return CORS headers on OPTIONS requests, causing
+    // the browser to block the connection and hang until the timeout fires.
+    // Cache busting is already fully guaranteed by the '_t' timestamp query parameter.
     response = await fetch(url, {
       signal: controller.signal,
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, max-age=0',
-        Pragma: 'no-cache',
-      },
     });
-  } catch (err: any) {
-    if (err?.name === 'AbortError') {
+  } catch (err: unknown) {
+    if (timedOut) {
       throw new SheetsApiError(
-        'Koneksi ke Google Sheets timed out (melewati 10 detik). Periksa kembali link spreadsheet atau koneksi internet.',
+        `Koneksi ke Google Sheets timed out (melewati ${Math.round(timeoutMs / 1000)} detik). ` +
+          'Pastikan spreadsheet disetel ke Akses Umum: "Siapa saja yang memiliki link" sebagai "Penglihat" (Viewer) dan koneksi internet stabil.',
         'TIMEOUT'
       );
     }
+    const isAbort = (err as { name?: string })?.name === 'AbortError';
+    if (isAbort) {
+      throw new SheetsApiError('Permintaan sinkronisasi dibatalkan.', 'ABORTED');
+    }
     throw new SheetsApiError(
-      'Gagal menghubungi server Google Sheets. Periksa koneksi internet Anda.',
+      'Gagal menghubungi server Google Sheets. Periksa koneksi internet Anda atau pastikan URL spreadsheet valid.',
       'NETWORK_ERROR'
     );
   } finally {
     clearTimeout(timeoutId);
+    if (options?.signal) {
+      options.signal.removeEventListener('abort', onExternalAbort);
+    }
   }
 
   if (!response.ok) {
@@ -209,7 +253,8 @@ export async function fetchSheetViaGViz(
 export async function fetchSheetViaAppsScript(
   webAppUrl: string,
   weights: RiskWeightsConfig,
-  customMapping?: ColumnMappingConfig
+  customMapping?: ColumnMappingConfig,
+  options?: FetchSheetOptions
 ): Promise<SheetFetchResult> {
   const url = webAppUrl.trim();
   if (!url) {
@@ -218,18 +263,47 @@ export async function fetchSheetViaAppsScript(
 
   const separator = url.includes('?') ? '&' : '?';
   const cacheBustedUrl = `${url}${separator}_t=${Date.now()}`;
+  const timeoutMs = options?.timeoutMs ?? 15000;
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onExternalAbort = () => controller.abort();
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timeoutId);
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
 
   let res: Response;
   try {
     res = await fetch(cacheBustedUrl, {
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, max-age=0',
-        Pragma: 'no-cache',
-      },
+      signal: controller.signal,
     });
   } catch (err: unknown) {
+    if (timedOut) {
+      throw new SheetsApiError(
+        `Koneksi ke Google Apps Script timed out (melewati ${Math.round(timeoutMs / 1000)} detik).`,
+        'TIMEOUT'
+      );
+    }
+    const isAbort = (err as { name?: string })?.name === 'AbortError';
+    if (isAbort) {
+      throw new SheetsApiError('Permintaan sinkronisasi dibatalkan.', 'ABORTED');
+    }
     throw new SheetsApiError('Gagal memanggil Google Apps Script URL. Pastikan deployment disetel ke "Anyone".', 'APPS_SCRIPT_ERROR');
+  } finally {
+    clearTimeout(timeoutId);
+    if (options?.signal) {
+      options.signal.removeEventListener('abort', onExternalAbort);
+    }
   }
 
   if (!res.ok) {
@@ -313,12 +387,13 @@ export async function fetchLiveSheetData(params: {
   accessToken?: string | null;
   weights: RiskWeightsConfig;
   customMapping?: ColumnMappingConfig;
+  signal?: AbortSignal;
 }): Promise<SheetFetchResult> {
-  const { spreadsheetId, sheetName, appsScriptUrl, accessToken, weights, customMapping } = params;
+  const { spreadsheetId, sheetName, appsScriptUrl, accessToken, weights, customMapping, signal } = params;
 
   // 1. If Apps Script Web App URL provided, use it
   if (appsScriptUrl && appsScriptUrl.trim()) {
-    return await fetchSheetViaAppsScript(appsScriptUrl, weights, customMapping);
+    return await fetchSheetViaAppsScript(appsScriptUrl, weights, customMapping, { signal });
   }
 
   // 2. Try Google Sheets API v4 if OAuth access token is valid
@@ -326,16 +401,15 @@ export async function fetchLiveSheetData(params: {
     try {
       const cleanId = extractSpreadsheetId(spreadsheetId);
       const targetSheet = sheetName.trim() || 'Rekap';
-      // Use dynamic unbounded range to capture all rows added to the spreadsheet
+      // Dynamic unbounded range to capture all rows added to the spreadsheet
       const range = `'${targetSheet}'!A:Z`;
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE&_t=${Date.now()}`;
 
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'Cache-Control': 'no-cache, no-store, max-age=0',
-          Pragma: 'no-cache',
         },
+        signal,
       });
 
       if (res.ok) {
@@ -406,22 +480,7 @@ export async function fetchLiveSheetData(params: {
       console.warn('OAuth API fetch failed, falling back to direct GViz endpoint', e);
     }
   }
-              items,
-              availableSheets: [targetSheet],
-              activeSheetName: targetSheet,
-              detectedHeaders,
-              mapping: activeMapping,
-              rawRowCount: rawRows.length,
-              sourceType: 'SHEETS_API_V4',
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('OAuth API fetch failed, falling back to direct GViz endpoint', e);
-    }
-  }
 
   // 3. Primary reliable method: Google Visualization API CSV Endpoint
-  return await fetchSheetViaGViz(spreadsheetId, sheetName, weights, customMapping);
+  return await fetchSheetViaGViz(spreadsheetId, sheetName, weights, customMapping, { signal });
 }
