@@ -138,24 +138,33 @@ export const MaterialDetailModal: React.FC<MaterialDetailModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-1.5 font-bold text-slate-900 uppercase tracking-wider text-xs">
                 <Calendar className="w-4 h-4 text-blue-600" />
-                <span>Jadwal Produksi &amp; Status Follow-Up PPIC</span>
+                <span>Jadwal Produksi &amp; Dampak PPIC</span>
               </div>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                  item.followUp?.isFollowedUp
-                    ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
-                    : 'bg-amber-100 border-amber-300 text-amber-900'
-                }`}
-              >
-                {item.followUp?.isFollowedUp ? '✓ SUDAH FOLLOW-UP' : 'BELUM FOLLOW-UP'}
-              </span>
+              <div className="flex items-center space-x-2">
+                {item.productionImpact && (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${item.productionImpact.badgeColor}`}
+                  >
+                    Dampak: {item.productionImpact.label}
+                  </span>
+                )}
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    item.followUp?.isFollowedUp
+                      ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
+                      : 'bg-amber-100 border-amber-300 text-amber-900'
+                  }`}
+                >
+                  {item.followUp?.isFollowedUp ? '✓ SUDAH FOLLOW-UP' : 'BELUM FOLLOW-UP'}
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-400 block font-medium">Jadwal Produksi OR</span>
                 <span className="font-bold text-slate-900 text-xs">
-                  {item.productionSchedule?.productionDate || 'Belum diatur (Perlu Penjadwalan)'}
+                  {item.productionImpact?.productionDateDisplay || item.productionSchedule?.productionDate || 'Jadwal Belum Tersedia'}
                 </span>
                 {item.daysToProduction !== null && item.daysToProduction !== undefined && (
                   <span
@@ -175,9 +184,9 @@ export const MaterialDetailModal: React.FC<MaterialDetailModalProps> = ({
               </div>
 
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                <span className="text-[10px] text-slate-400 block font-medium">Keterangan Risiko Jadwal</span>
+                <span className="text-[10px] text-slate-400 block font-medium">Alasan Penetapan Dampak</span>
                 <span className="text-xs font-semibold text-slate-700 block">
-                  {item.primaryRiskReason || 'Normal'}
+                  {item.productionImpact?.reason || item.primaryRiskReason || 'Normal'}
                 </span>
                 {item.followUp?.followedUpAt && (
                   <span className="block text-[10px] text-slate-400 mt-0.5">

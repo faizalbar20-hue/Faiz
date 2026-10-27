@@ -15,6 +15,8 @@ import {
   ColumnMappingConfig,
   ProductionSchedule,
   MaterialFollowUp,
+  ProductionImpactLevel,
+  ProductionImpactResult,
 } from '../types/ppic';
 
 /**
@@ -438,6 +440,140 @@ export function evaluateMaterialRisk(
 }
 
 /**
+ * Evaluates Production Impact based on OR Production Schedule, Material Shortage, and Urgency.
+ *
+ * Classification:
+ * - TIDAK_BERDAMPAK: Material sudah terpenuhi atau aman (defisit = 0 / READY).
+ * - KRITIS: Kekurangan material untuk produksi yang sudah sangat dekat (<= 3 hari) atau bahkan sudah lewat jadwal (< 0 hari / overdue).
+ * - TINGGI: Kekurangan material berisiko tinggi menghentikan atau menunda produksi (4–7 hari).
+ * - SEDANG: Kekurangan material mulai berisiko mengganggu persiapan produksi (8–14 hari).
+ * - RENDAH: Ada kekurangan material tetapi waktu menuju tanggal produksi masih sangat longgar (> 14 hari).
+ * - BELUM_TERJADWAL: Tanggal produksi belum diatur pada sistem ("Jadwal Belum Tersedia").
+ */
+export function evaluateProductionImpact(
+  item: {
+    quantity: number;
+    receivedQty: number;
+    calculatedShortage: number;
+    readinessStatus: ReadinessStatus;
+    unit: string;
+    productionSchedule?: ProductionSchedule | null;
+  },
+  referenceDate: Date = new Date()
+): ProductionImpactResult {
+  const sched = item.productionSchedule;
+  const shortage = Math.max(0, item.calculatedShortage);
+  const isFulfilled = item.readinessStatus === 'READY' || (shortage <= 0 && item.quantity <= item.receivedQty);
+  const unit = item.unit || 'unit';
+
+  // Case A: No schedule available
+  if (!sched || !sched.productionDate || !sched.productionDate.trim()) {
+    return {
+      level: 'BELUM_TERJADWAL',
+      label: 'Jadwal Belum Tersedia',
+      badgeColor: 'bg-slate-100 text-slate-700 border-slate-300',
+      reason: isFulfilled
+        ? 'Material telah terpenuhi, namun jadwal produksi per OR belum diinput'
+        : `Defisit ${shortage.toLocaleString()} ${unit}, jadwal produksi per OR belum diinput`,
+      daysToProduction: null,
+      productionDateDisplay: 'Jadwal Belum Tersedia',
+    };
+  }
+
+  // Calculate days to production
+  let daysToProduction: number | null = null;
+  const schedDate = parseSheetDate(sched.productionDate) || new Date(sched.productionDate);
+  if (!isNaN(schedDate.getTime())) {
+    const startOfToday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+    const startOfSched = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate());
+    const diffTime = startOfSched.getTime() - startOfToday.getTime();
+    daysToProduction = Math.round(diffTime / 86400000);
+  }
+
+  if (daysToProduction === null) {
+    return {
+      level: 'BELUM_TERJADWAL',
+      label: 'Jadwal Belum Tersedia',
+      badgeColor: 'bg-slate-100 text-slate-700 border-slate-300',
+      reason: `Format tanggal jadwal '${sched.productionDate}' tidak valid`,
+      daysToProduction: null,
+      productionDateDisplay: 'Jadwal Belum Tersedia',
+    };
+  }
+
+  const productionDateDisplay = sched.productionDate;
+
+  // Case B: Material fulfilled / ready
+  if (isFulfilled) {
+    return {
+      level: 'TIDAK_BERDAMPAK',
+      label: 'Tidak Berdampak',
+      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      reason: `Material telah terpenuhi (Stok aman untuk produksi ${productionDateDisplay})`,
+      daysToProduction,
+      productionDateDisplay,
+    };
+  }
+
+  // Case C: Deficit exists, classified strictly by urgency
+  if (daysToProduction < 0) {
+    const overdue = Math.abs(daysToProduction);
+    return {
+      level: 'KRITIS',
+      label: 'Kritis',
+      badgeColor: 'bg-red-700 text-white border-red-800 shadow-xs animate-pulse',
+      reason: `🚨 Overdue produksi ${overdue} hari lalu (${productionDateDisplay}) dengan defisit ${shortage.toLocaleString()} ${unit}`,
+      daysToProduction,
+      productionDateDisplay,
+    };
+  }
+
+  if (daysToProduction <= 3) {
+    const timeText = daysToProduction === 0 ? 'hari ini' : `${daysToProduction} hari lagi`;
+    return {
+      level: 'KRITIS',
+      label: 'Kritis',
+      badgeColor: 'bg-red-100 text-red-800 border-red-300 font-extrabold',
+      reason: `⚠️ Produksi ${timeText} (${productionDateDisplay}) - waktu sangat mepet dengan defisit ${shortage.toLocaleString()} ${unit}`,
+      daysToProduction,
+      productionDateDisplay,
+    };
+  }
+
+  if (daysToProduction <= 7) {
+    return {
+      level: 'TINGGI',
+      label: 'Tinggi',
+      badgeColor: 'bg-orange-100 text-orange-800 border-orange-300 font-bold',
+      reason: `Waktu produksi tersisa ${daysToProduction} hari (${productionDateDisplay}); defisit ${shortage.toLocaleString()} ${unit} berisiko tinggi menunda line`,
+      daysToProduction,
+      productionDateDisplay,
+    };
+  }
+
+  if (daysToProduction <= 14) {
+    return {
+      level: 'SEDANG',
+      label: 'Sedang',
+      badgeColor: 'bg-amber-100 text-amber-800 border-amber-300 font-semibold',
+      reason: `Waktu produksi ${daysToProduction} hari lagi (${productionDateDisplay}); defisit ${shortage.toLocaleString()} ${unit} berisiko mengganggu persiapan`,
+      daysToProduction,
+      productionDateDisplay,
+    };
+  }
+
+  // daysToProduction > 14
+  return {
+    level: 'RENDAH',
+    label: 'Rendah',
+    badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
+    reason: `Waktu tersisa ${daysToProduction} hari (${productionDateDisplay}); masih memadai untuk pemenuhan defisit ${shortage.toLocaleString()} ${unit}`,
+    daysToProduction,
+    productionDateDisplay,
+  };
+}
+
+/**
  * Transforms raw sheet row into a rich ParsedMaterialItem with all validations and scoring.
  */
 export function parseRawRow(
@@ -512,6 +648,18 @@ export function parseRawRow(
 
   const normalizedUnit = (raw.unit || '').trim().toUpperCase() || 'UNIT';
 
+  const productionImpact = evaluateProductionImpact(
+    {
+      quantity,
+      receivedQty,
+      calculatedShortage,
+      readinessStatus,
+      unit: normalizedUnit,
+      productionSchedule,
+    },
+    referenceDate
+  );
+
   return {
     id: `${raw.orNumber || 'NO-OR'}-${raw.style || 'NO-STYLE'}-${code}-${raw.rowIndex}`,
     rowIndex: raw.rowIndex,
@@ -539,6 +687,7 @@ export function parseRawRow(
     productionSchedule: productionSchedule || null,
     daysToProduction: risk.daysToProduction,
     scheduleStatus: risk.scheduleStatus,
+    productionImpact,
     shortageRiskScore: risk.shortageRiskScore,
     staleRiskScore: risk.staleRiskScore,
     compositeRiskScore: risk.compositeRiskScore,
@@ -680,11 +829,24 @@ export function enrichItemsWithSchedulesAndFollowUps(
       referenceDate
     );
 
+    const productionImpact = evaluateProductionImpact(
+      {
+        quantity: item.quantity,
+        receivedQty: item.receivedQty,
+        calculatedShortage: item.calculatedShortage,
+        readinessStatus: item.readinessStatus,
+        unit: item.unit,
+        productionSchedule: sched,
+      },
+      referenceDate
+    );
+
     return {
       ...item,
       productionSchedule: sched,
       daysToProduction: risk.daysToProduction,
       scheduleStatus: risk.scheduleStatus,
+      productionImpact,
       followUp,
       shortageRiskScore: risk.shortageRiskScore,
       staleRiskScore: risk.staleRiskScore,

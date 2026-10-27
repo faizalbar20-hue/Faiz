@@ -41,6 +41,23 @@ export interface MaterialFollowUp {
   notes?: string;
 }
 
+export type ProductionImpactLevel =
+  | 'TIDAK_BERDAMPAK'
+  | 'RENDAH'
+  | 'SEDANG'
+  | 'TINGGI'
+  | 'KRITIS'
+  | 'BELUM_TERJADWAL';
+
+export interface ProductionImpactResult {
+  level: ProductionImpactLevel;
+  label: string; // 'Tidak Berdampak' | 'Rendah' | 'Sedang' | 'Tinggi' | 'Kritis' | 'Jadwal Belum Tersedia'
+  badgeColor: string;
+  reason: string;
+  daysToProduction: number | null;
+  productionDateDisplay: string;
+}
+
 export interface ParsedMaterialItem {
   id: string; // generated unique id: or-style-code-row
   rowIndex: number;
@@ -78,6 +95,7 @@ export interface ParsedMaterialItem {
   productionSchedule?: ProductionSchedule | null;
   daysToProduction?: number | null; // Selisih hari menuju tanggal produksi (targetDate - today)
   scheduleStatus?: 'SCHEDULED' | 'UNSCHEDULED';
+  productionImpact?: ProductionImpactResult;
 
   // Follow-Up tracking
   followUp?: MaterialFollowUp;

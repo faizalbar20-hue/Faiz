@@ -239,18 +239,18 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-red-800">
-                C. Production Schedule Risk
+                C. Dampak Produksi Jadwal OR
               </span>
               <span className="text-xs font-bold bg-red-100 text-red-800 px-2 py-0.5 rounded">
                 {counts.scheduledUrgent} Defisit Terjadwal
               </span>
             </div>
             <p className="text-xs text-slate-600 mt-2">
-              Dihitung dari selisih hari menuju jadwal produksi per OR. Menandai defisit yang mendekati tanggal potong (H-3) atau sudah lewat (Overdue).
+              Penilaian dampak ketersediaan terhadap jadwal produksi per OR berdasarkan urgensi (Kritis &le; 3 hari / overdue, Tinggi 4–7 hari, Sedang 8–14 hari, Rendah &gt; 14 hari).
             </p>
           </div>
           <div className="mt-4 pt-3 border-t border-red-100 text-[11px] font-medium text-red-900 flex items-center justify-between">
-            <span>Filter Kategori Jadwal</span>
+            <span>Filter Kategori Dampak Jadwal</span>
             <ChevronRight className="w-3.5 h-3.5" />
           </div>
         </div>
@@ -384,7 +384,14 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
                       <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
                         Prioritas: {item.followUpPriority}
                       </span>
-                      {item.productionSchedule?.productionDate && (
+                      {item.productionImpact && (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded font-bold border ${item.productionImpact.badgeColor}`}
+                        >
+                          Dampak: {item.productionImpact.label}
+                        </span>
+                      )}
+                      {item.productionSchedule?.productionDate ? (
                         <span
                           className={`text-xs px-2 py-0.5 rounded font-semibold border ${
                             typeof item.daysToProduction === 'number' && item.daysToProduction < 0
@@ -401,6 +408,10 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
                             ? `${item.daysToProduction} hari lagi`
                             : '-'}
                           )
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                          Jadwal Belum Tersedia
                         </span>
                       )}
                       {item.followUp?.isFollowedUp && (
