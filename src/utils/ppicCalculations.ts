@@ -132,6 +132,60 @@ export function calculateDataAgeDays(updateDate: Date | null, referenceDate: Dat
  * e.g. "[BT-001] BUTTON 4 HOLE" -> code: "BT-001", name: "BUTTON 4 HOLE"
  * e.g. "KN-POLY - KAIN POLYESTER" -> code: "KN-POLY", name: "KAIN POLYESTER"
  */
+/**
+ * Normalizes an OR string (removes "OR", "PO", punctuation, spaces, uppercase).
+ * e.g. "OR 1096" -> "1096", "OR-1096" -> "1096", "1096" -> "1096"
+ */
+export function normalizeOr(orStr: string): string {
+  if (!orStr) return '';
+  return orStr
+    .trim()
+    .toUpperCase()
+    .replace(/^OR\s*[-_.]?\s*/i, '')
+    .replace(/^PO\s*[-_.]?\s*/i, '')
+    .replace(/\s+/g, '');
+}
+
+/**
+ * Checks whether an item's OR matches a search query or filter.
+ * Handles variations: "1096", "OR 1096", "OR1096", "OR-1096", etc.
+ */
+export function matchesOrQuery(itemOr: string, query: string): boolean {
+  if (!query || query.trim() === '' || query === 'ALL') return true;
+  const q = query.trim().toLowerCase();
+  const raw = String(itemOr || '').trim().toLowerCase();
+
+  // Direct substring match
+  if (raw.includes(q)) return true;
+
+  // Normalized OR match
+  const normQ = normalizeOr(q);
+  const normRaw = normalizeOr(raw);
+  if (normQ && normRaw && (normRaw === normQ || normRaw.includes(normQ) || normQ.includes(normRaw))) {
+    return true;
+  }
+
+  // Pure digits match (e.g. "1096")
+  const digitsQ = q.replace(/[^\d]/g, '');
+  const digitsRaw = raw.replace(/[^\d]/g, '');
+  if (digitsQ && digitsRaw && digitsRaw === digitsQ) {
+    return true;
+  }
+
+  // Space-collapsed match
+  const qNoSpace = q.replace(/\s+/g, '');
+  const rawNoSpace = raw.replace(/\s+/g, '');
+  return rawNoSpace.includes(qNoSpace);
+}
+
+/**
+ * Extracts material code and clean name from product display name.
+ * e.g. "[BT-001] BUTTON 4 HOLE" -> code: "BT-001", name: "BUTTON 4 HOLE"
+ * e.g. "KN-POLY - KAIN POLYESTER" -> code: "KN-POLY", name: "KAIN POLYESTER"
+ *
+ * NOTE: Does NOT greedily slice normal words like "BENANG" or "KAIN" or "1096" into codes,
+ * preventing distinct materials from colliding on generic prefixes.
+ */
 export function extractMaterialCodeAndName(displayName: string): { code: string; name: string } {
   const clean = (displayName || '').trim();
   if (!clean) return { code: '-', name: 'Tidak diketahui' };
@@ -139,14 +193,13 @@ export function extractMaterialCodeAndName(displayName: string): { code: string;
   // Format [CODE] Name
   const bracketMatch = clean.match(/^\[([^\]]+)\]\s*(.*)$/);
   if (bracketMatch) {
-    return {
-      code: bracketMatch[1].trim(),
-      name: bracketMatch[2].trim() || bracketMatch[1].trim(),
-    };
+    const code = bracketMatch[1].trim();
+    const name = bracketMatch[2].trim() || code;
+    return { code, name };
   }
 
-  // Format CODE - Name (requires spaces around dash or colon)
-  const dashMatch = clean.match(/^([A-Z0-9_./-]+?)\s+[-:]\s+(.+)$/i);
+  // Format CODE - Name (requires spaces around dash or colon, code is typically short alphanumeric)
+  const dashMatch = clean.match(/^([A-Z0-9_./#]{2,15})\s+[-:]\s+(.+)$/i);
   if (dashMatch) {
     return {
       code: dashMatch[1].trim(),
@@ -154,18 +207,7 @@ export function extractMaterialCodeAndName(displayName: string): { code: string;
     };
   }
 
-  // If first token is a short alphanumeric code followed by name
-  const words = clean.split(/\s+/);
-  if (words.length > 1 && words[0].length <= 15 && /^[A-Z0-9_./-]+$/i.test(words[0])) {
-    const remaining = clean.substring(words[0].length).trim().replace(/^[-:]\s*/, '');
-    if (remaining) {
-      return {
-        code: words[0],
-        name: remaining,
-      };
-    }
-  }
-
+  // If no structured prefix code, code is the full material label to preserve identity
   return { code: clean, name: clean };
 }
 
@@ -715,13 +757,17 @@ export function parseRawRow(
 export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): ParsedMaterialItem[] {
   if (!items || items.length <= 1) return items;
 
-  // Group by OR and Material Code
+  // Group by OR and Material Identity (OR, Style, Code/Name, Unit)
   const groups = new Map<string, ParsedMaterialItem[]>();
 
   for (const item of items) {
     const orKey = (item.orNumber || '-').trim().toUpperCase();
-    const codeKey = (item.materialCode && item.materialCode !== '-' ? item.materialCode : item.productDisplayName || '-').trim().toUpperCase();
-    const groupKey = `${orKey}___${codeKey}`;
+    const styleKey = (item.style || '-').trim().toUpperCase();
+    const codeKey = (item.materialCode && item.materialCode !== '-' ? item.materialCode : '').trim().toUpperCase();
+    const nameKey = (item.materialName || item.productDisplayName || '-').trim().toUpperCase();
+    const unitKey = (item.unit || '').trim().toUpperCase();
+    // Multi-attribute groupKey ensures distinct materials in the same OR are strictly preserved
+    const groupKey = `${orKey}___${styleKey}___${codeKey || nameKey}___${nameKey}___${unitKey}`;
 
     let list = groups.get(groupKey);
     if (!list) {

@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { ParsedMaterialItem, RiskWeightsConfig } from '../types/ppic';
+import { matchesOrQuery, normalizeOr } from '../utils/ppicCalculations';
 
 interface RiskAnalysisViewProps {
   items: ParsedMaterialItem[];
@@ -43,20 +44,24 @@ export const RiskAnalysisView: React.FC<RiskAnalysisViewProps> = ({
       .filter((item) => {
         if (!item) return false;
 
-        // OR dropdown filter
-        if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
+        // OR dropdown filter (supports exact and normalized matching)
+        if (
+          selectedOrFilter !== 'ALL' &&
+          item.orNumber !== selectedOrFilter &&
+          normalizeOr(item.orNumber) !== normalizeOr(selectedOrFilter)
+        ) {
           return false;
         }
 
-        // Search term in OR, Style, code, or name
+        // Search term in OR, Style, code, name, or product display name
         if (searchTerm && searchTerm.trim()) {
           const q = searchTerm.toLowerCase().trim();
-          const match =
-            String(item.orNumber || '').toLowerCase().includes(q) ||
-            String(item.style || '').toLowerCase().includes(q) ||
-            String(item.materialCode || '').toLowerCase().includes(q) ||
-            String(item.materialName || '').toLowerCase().includes(q);
-          if (!match) return false;
+          const matchOr = matchesOrQuery(item.orNumber, q);
+          const matchStyle = String(item.style || '').toLowerCase().includes(q);
+          const matchCode = String(item.materialCode || '').toLowerCase().includes(q);
+          const matchName = String(item.materialName || '').toLowerCase().includes(q);
+          const matchDisplay = String(item.productDisplayName || '').toLowerCase().includes(q);
+          if (!matchOr && !matchStyle && !matchCode && !matchName && !matchDisplay) return false;
         }
 
         // Tab filters

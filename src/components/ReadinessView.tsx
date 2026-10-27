@@ -16,6 +16,7 @@ import {
   Square,
 } from 'lucide-react';
 import { ParsedMaterialItem, ReadinessStatus, RiskLevel } from '../types/ppic';
+import { matchesOrQuery, normalizeOr } from '../utils/ppicCalculations';
 
 interface ReadinessViewProps {
   items: ParsedMaterialItem[];
@@ -71,15 +72,15 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
       .filter((item) => {
         if (!item) return false;
 
-        // Search term in code, name, OR, or Style
+        // Search term in code, name, OR, or Style (never filters by readiness status)
         if (searchTerm && searchTerm.trim()) {
           const q = searchTerm.toLowerCase().trim();
-          const match =
-            String(item.materialCode || '').toLowerCase().includes(q) ||
-            String(item.materialName || '').toLowerCase().includes(q) ||
-            String(item.orNumber || '').toLowerCase().includes(q) ||
-            String(item.style || '').toLowerCase().includes(q);
-          if (!match) return false;
+          const matchOr = matchesOrQuery(item.orNumber, q);
+          const matchCode = String(item.materialCode || '').toLowerCase().includes(q);
+          const matchName = String(item.materialName || '').toLowerCase().includes(q);
+          const matchDisplay = String(item.productDisplayName || '').toLowerCase().includes(q);
+          const matchStyle = String(item.style || '').toLowerCase().includes(q);
+          if (!matchOr && !matchCode && !matchName && !matchDisplay && !matchStyle) return false;
         }
 
         // Tanggal Update Search
@@ -110,8 +111,14 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         // Risk Filter
         if (riskFilter !== 'ALL' && item.riskLevel !== riskFilter) return false;
 
-        // OR Filter
-        if (orFilter !== 'ALL' && item.orNumber !== orFilter) return false;
+        // OR Filter (supports exact and normalized matching)
+        if (
+          orFilter !== 'ALL' &&
+          item.orNumber !== orFilter &&
+          normalizeOr(item.orNumber) !== normalizeOr(orFilter)
+        ) {
+          return false;
+        }
 
         // Unit Filter
         if (unitFilter !== 'ALL' && item.unit !== unitFilter) return false;
@@ -422,6 +429,11 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
             <span>
               Menampilkan <strong>{filteredItems.length}</strong> dari <strong>{items.length}</strong> material
             </span>
+            {(searchTerm || orFilter !== 'ALL') && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                {filteredItems.length} material terhubung
+              </span>
+            )}
             {(searchTerm || dateSearchTerm || statusFilter !== 'ALL' || riskFilter !== 'ALL' || orFilter !== 'ALL' || unitFilter !== 'ALL' || onlyStale) && (
               <button
                 onClick={resetFilters}

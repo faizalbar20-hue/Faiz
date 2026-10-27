@@ -59,6 +59,18 @@ export const INITIAL_DEMO_SCHEDULES: ProductionSchedule[] = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: 'sched-1096',
+    orNumber: 'OR 1096',
+    productionDate: new Date(Date.now() + 4 * 86400000).toISOString().slice(0, 10), // H+4
+    materialCode: 'ZIP-MET-08',
+    materialName: '2-WAY METAL ZIPPER #8 ANTIQUE BRASS 65CM',
+    requiredQty: 900,
+    leadTimeDays: 5,
+    notes: 'Jadwal jahit utama bomber jacket JK-550. Perlu segera konfirmasi zipper metal.',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ];
 
 /**

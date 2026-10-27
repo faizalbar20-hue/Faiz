@@ -14,7 +14,7 @@ import {
   CalendarClock,
 } from 'lucide-react';
 import { PpicDashboardKpi, ParsedMaterialItem, ProductionImpactLevel } from '../types/ppic';
-import { calculateDashboardKpi } from '../utils/ppicCalculations';
+import { calculateDashboardKpi, matchesOrQuery, normalizeOr } from '../utils/ppicCalculations';
 
 interface OverviewViewProps {
   kpi: PpicDashboardKpi;
@@ -58,21 +58,26 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     };
   }, [items]);
 
-  // Filter items by search term (OR or Style) or selected OR chip
+  // Filter items by search term (OR, Style, Material) or selected OR chip
+  // NEVER filters by readiness status: READY, NOT READY, and CHECK DATA are all retained
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       if (!item) return false;
-      if (selectedOrFilter !== 'ALL' && item.orNumber !== selectedOrFilter) {
+      if (
+        selectedOrFilter !== 'ALL' &&
+        item.orNumber !== selectedOrFilter &&
+        normalizeOr(item.orNumber) !== normalizeOr(selectedOrFilter)
+      ) {
         return false;
       }
       if (searchTerm && searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
-        const match =
-          String(item.orNumber || '').toLowerCase().includes(q) ||
-          String(item.style || '').toLowerCase().includes(q) ||
-          String(item.materialCode || '').toLowerCase().includes(q) ||
-          String(item.materialName || '').toLowerCase().includes(q);
-        if (!match) return false;
+        const matchOr = matchesOrQuery(item.orNumber, q);
+        const matchStyle = String(item.style || '').toLowerCase().includes(q);
+        const matchCode = String(item.materialCode || '').toLowerCase().includes(q);
+        const matchName = String(item.materialName || '').toLowerCase().includes(q);
+        const matchDisplay = String(item.productDisplayName || '').toLowerCase().includes(q);
+        if (!matchOr && !matchStyle && !matchCode && !matchName && !matchDisplay) return false;
       }
       return true;
     });

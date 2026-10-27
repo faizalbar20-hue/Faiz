@@ -211,10 +211,14 @@ export default function App() {
         customMapping: settings.columnMapping,
       });
 
-      // Compute lightweight data fingerprint to check if sheet changed
+      // Compute robust data fingerprint to immediately detect newly appended rows and cell edits
+      let qtyChecksum = 0;
+      for (let i = 0; i < result.items.length; i++) {
+        qtyChecksum = (qtyChecksum + result.items[i].quantity + result.items[i].receivedQty) % 10000000;
+      }
       const firstRow = result.items[0];
       const lastRow = result.items[result.items.length - 1];
-      const newFingerprint = `${result.items.length}:${firstRow?.id || ''}_${firstRow?.updateDateFormatted || ''}:${lastRow?.id || ''}_${lastRow?.receivedQty || ''}`;
+      const newFingerprint = `${result.rawRowCount}:${result.items.length}:${qtyChecksum}:${firstRow?.id || ''}:${lastRow?.id || ''}_${lastRow?.receivedQty || ''}`;
 
       if (newFingerprint !== lastFingerprintRef.current) {
         lastFingerprintRef.current = newFingerprint;

@@ -5,7 +5,11 @@ import {
   evaluateMaterialRisk,
   evaluateProductionImpact,
   enrichItemsWithSchedulesAndFollowUps,
+  matchesOrQuery,
+  normalizeOr,
+  parseRawRow,
 } from './ppicCalculations';
+import { getDemoMaterialItems } from '../data/demoPpicData';
 import {
   ParsedMaterialItem,
   ProductionSchedule,
@@ -450,3 +454,67 @@ describe('Dampak Produksi (Production Impact) Rules & Urgency Classification', (
     assert.equal(enriched[0].productionImpact?.label, 'Tidak Berdampak');
   });
 });
+
+describe('OR 1096 All 12 Materials & Dynamic Row Expansion', () => {
+  test('OR 1096 retains all 12 materials including READY and NOT READY items', () => {
+    const allDemoItems = getDemoMaterialItems(DEFAULT_WEIGHTS);
+    const or1096Items = allDemoItems.filter((i) => matchesOrQuery(i.orNumber, '1096'));
+
+    assert.equal(or1096Items.length, 12, 'OR 1096 must have exactly 12 materials');
+
+    // Verify readiness status neutrality: Both READY and NOT READY materials are present
+    const readyItems = or1096Items.filter((i) => i.readinessStatus === 'READY');
+    const notReadyItems = or1096Items.filter((i) => i.readinessStatus === 'NOT READY');
+
+    assert.ok(readyItems.length > 0, 'Must have READY materials');
+    assert.ok(notReadyItems.length > 0, 'Must have NOT READY materials');
+    assert.equal(readyItems.length + notReadyItems.length, 12, 'All 12 materials must be accounted for');
+  });
+
+  test('matchesOrQuery matches various query formats for OR 1096', () => {
+    const itemOr = 'OR 1096';
+    assert.ok(matchesOrQuery(itemOr, '1096'), 'Matches pure digits');
+    assert.ok(matchesOrQuery(itemOr, 'OR 1096'), 'Matches exact string');
+    assert.ok(matchesOrQuery(itemOr, 'or 1096'), 'Matches lowercase');
+    assert.ok(matchesOrQuery(itemOr, 'OR-1096'), 'Matches hyphenated');
+    assert.ok(matchesOrQuery(itemOr, 'or1096'), 'Matches collapsed');
+    assert.equal(normalizeOr('OR 1096'), '1096');
+    assert.equal(normalizeOr('OR-1096'), '1096');
+    assert.equal(normalizeOr('1096'), '1096');
+  });
+
+  test('Dynamic row addition increases OR 1096 material count without dropping existing items', () => {
+    const allDemoItems = getDemoMaterialItems(DEFAULT_WEIGHTS);
+    const initialOr1096 = allDemoItems.filter((i) => matchesOrQuery(i.orNumber, '1096'));
+    assert.equal(initialOr1096.length, 12);
+
+    // Simulate appending a 13th row for OR 1096 from Google Sheets
+    const newAppendedRow = parseRawRow(
+      {
+        rowIndex: 30,
+        orNumber: 'OR 1096',
+        style: 'JK-550 BOMBER',
+        updateDateRaw: '2026-10-22',
+        productDisplayName: '[PKG-HANGTAG-13] EMBOSSED FOIL HANGTAG WITH STRING',
+        quantityRaw: '1000',
+        receivedQtyRaw: '1000',
+        balanceRaw: '0',
+        unit: 'PCS',
+        ketRaw: 'OKE',
+      },
+      DEFAULT_WEIGHTS,
+      new Date('2026-10-22')
+    );
+
+    const updatedDataset = [...allDemoItems, newAppendedRow];
+    const deduplicated = filterLatestMaterialUpdates(updatedDataset);
+    const updatedOr1096 = deduplicated.filter((i) => matchesOrQuery(i.orNumber, '1096'));
+
+    assert.equal(updatedOr1096.length, 13, 'OR 1096 must now have 13 materials');
+    assert.ok(
+      updatedOr1096.some((i) => i.materialName.includes('HANGTAG')),
+      'New material must be present'
+    );
+  });
+});
+

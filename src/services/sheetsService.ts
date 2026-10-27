@@ -61,19 +61,27 @@ export async function fetchSheetViaGViz(
   }
 
   const targetSheet = sheetName.trim() || 'Rekap';
-  // GViz endpoint for CSV output
-  const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}`;
+  // GViz endpoint for CSV output with cache-busting timestamp
+  const timestamp = Date.now();
+  const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}&_t=${timestamp}`;
 
   let response: Response;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    response = await fetch(url, { signal: controller.signal });
+    response = await fetch(url, {
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+    });
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       throw new SheetsApiError(
-        'Koneksi ke Google Sheets timed out (melewati 8 detik). Periksa kembali link spreadsheet atau koneksi internet.',
+        'Koneksi ke Google Sheets timed out (melewati 10 detik). Periksa kembali link spreadsheet atau koneksi internet.',
         'TIMEOUT'
       );
     }
@@ -129,6 +137,10 @@ export async function fetchSheetViaGViz(
   const items: ParsedMaterialItem[] = [];
   const referenceDate = new Date();
 
+  // Track last seen OR and Style to properly handle vertically merged cells in Google Sheets
+  let lastSeenOr = '';
+  let lastSeenStyle = '';
+
   for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
     const row = rawRows[r];
     if (!Array.isArray(row) || row.length === 0) continue;
@@ -136,9 +148,23 @@ export async function fetchSheetViaGViz(
     const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
     if (isAllEmpty) continue;
 
-    const orNumber = String(row[activeMapping.colOr] || '').trim();
-    const style = String(row[activeMapping.colStyle] || '').trim();
+    let orNumber = String(row[activeMapping.colOr] || '').trim();
+    let style = String(row[activeMapping.colStyle] || '').trim();
     const product = String(row[activeMapping.colProduct] || '').trim();
+
+    // Forward-fill OR number if merged vertically in spreadsheet
+    if (orNumber) {
+      lastSeenOr = orNumber;
+    } else if (product && lastSeenOr) {
+      orNumber = lastSeenOr;
+    }
+
+    // Forward-fill Style if merged vertically in spreadsheet
+    if (style) {
+      lastSeenStyle = style;
+    } else if (product && lastSeenStyle) {
+      style = lastSeenStyle;
+    }
 
     if (!product && !orNumber) continue;
 
@@ -190,9 +216,18 @@ export async function fetchSheetViaAppsScript(
     throw new SheetsApiError('URL Google Apps Script belum diisi.', 'MISSING_URL');
   }
 
+  const separator = url.includes('?') ? '&' : '?';
+  const cacheBustedUrl = `${url}${separator}_t=${Date.now()}`;
+
   let res: Response;
   try {
-    res = await fetch(url);
+    res = await fetch(cacheBustedUrl, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+    });
   } catch (err: unknown) {
     throw new SheetsApiError('Gagal memanggil Google Apps Script URL. Pastikan deployment disetel ke "Anyone".', 'APPS_SCRIPT_ERROR');
   }
@@ -213,19 +248,38 @@ export async function fetchSheetViaAppsScript(
 
   const items: ParsedMaterialItem[] = [];
   const referenceDate = new Date();
+  let lastSeenOr = '';
+  let lastSeenStyle = '';
 
   for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
     const row = rawRows[r] as unknown[];
     if (!Array.isArray(row) || row.length === 0) continue;
 
+    const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
+    if (isAllEmpty) continue;
+
+    let orNumber = String(row[activeMapping.colOr] || '').trim();
+    let style = String(row[activeMapping.colStyle] || '').trim();
     const product = String(row[activeMapping.colProduct] || '').trim();
-    const orNumber = String(row[activeMapping.colOr] || '').trim();
+
+    if (orNumber) {
+      lastSeenOr = orNumber;
+    } else if (product && lastSeenOr) {
+      orNumber = lastSeenOr;
+    }
+
+    if (style) {
+      lastSeenStyle = style;
+    } else if (product && lastSeenStyle) {
+      style = lastSeenStyle;
+    }
+
     if (!product && !orNumber) continue;
 
     const rawItem: RawSheetRow = {
       rowIndex: r + 1,
       orNumber,
-      style: String(row[activeMapping.colStyle] || '').trim(),
+      style,
       updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
       productDisplayName: product,
       quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
@@ -272,11 +326,16 @@ export async function fetchLiveSheetData(params: {
     try {
       const cleanId = extractSpreadsheetId(spreadsheetId);
       const targetSheet = sheetName.trim() || 'Rekap';
-      const range = `'${targetSheet}'!A1:Z1000`;
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
+      // Use dynamic unbounded range to capture all rows added to the spreadsheet
+      const range = `'${targetSheet}'!A:Z`;
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE&_t=${Date.now()}`;
 
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Cache-Control': 'no-cache, no-store, max-age=0',
+          Pragma: 'no-cache',
+        },
       });
 
       if (res.ok) {
@@ -287,18 +346,38 @@ export async function fetchLiveSheetData(params: {
           const activeMapping = customMapping || detectedMapping;
           const items: ParsedMaterialItem[] = [];
           const referenceDate = new Date();
+          let lastSeenOr = '';
+          let lastSeenStyle = '';
 
           for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
             const row = rawRows[r];
             if (!Array.isArray(row) || row.length === 0) continue;
-            const orNumber = String(row[activeMapping.colOr] || '').trim();
+
+            const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
+            if (isAllEmpty) continue;
+
+            let orNumber = String(row[activeMapping.colOr] || '').trim();
+            let style = String(row[activeMapping.colStyle] || '').trim();
             const product = String(row[activeMapping.colProduct] || '').trim();
+
+            if (orNumber) {
+              lastSeenOr = orNumber;
+            } else if (product && lastSeenOr) {
+              orNumber = lastSeenOr;
+            }
+
+            if (style) {
+              lastSeenStyle = style;
+            } else if (product && lastSeenStyle) {
+              style = lastSeenStyle;
+            }
+
             if (!product && !orNumber) continue;
 
             const rawItem: RawSheetRow = {
               rowIndex: r + 1,
               orNumber,
-              style: String(row[activeMapping.colStyle] || '').trim(),
+              style,
               updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
               productDisplayName: product,
               quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
@@ -312,6 +391,21 @@ export async function fetchLiveSheetData(params: {
 
           if (items.length > 0) {
             return {
+              items,
+              availableSheets: [targetSheet],
+              activeSheetName: targetSheet,
+              detectedHeaders,
+              mapping: activeMapping,
+              rawRowCount: rawRows.length,
+              sourceType: 'SHEETS_API_V4',
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('OAuth API fetch failed, falling back to direct GViz endpoint', e);
+    }
+  }
               items,
               availableSheets: [targetSheet],
               activeSheetName: targetSheet,
