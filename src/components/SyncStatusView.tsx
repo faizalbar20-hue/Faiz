@@ -14,6 +14,8 @@ import { SyncLogEntry, ParsedMaterialItem } from '../types/ppic';
 interface SyncStatusViewProps {
   spreadsheetId: string;
   sheetName: string;
+  rawRowCount?: number;
+  processedRangeInfo?: string;
   isSyncing: boolean;
   lastSyncTime: Date | null;
   lastError: string | null;
@@ -27,6 +29,8 @@ interface SyncStatusViewProps {
 export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
   spreadsheetId,
   sheetName,
+  rawRowCount,
+  processedRangeInfo,
   isSyncing,
   lastSyncTime,
   lastError,
@@ -64,83 +68,108 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
         </div>
       </div>
 
-      {/* Connection Diagnostic Card */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Connection & Ingestion Diagnostic Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Connection State */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
               Status Integrasi
             </span>
             <Database className="w-4 h-4 text-slate-400" />
           </div>
-          <div className="my-3">
+          <div className="my-2.5">
             {isDemoMode ? (
               <div className="flex items-center space-x-2">
-                <span className="w-3 h-3 rounded-full bg-amber-500"></span>
-                <span className="text-base font-bold text-amber-700">Mode Simulasi DEMO</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                <span className="text-sm font-bold text-amber-700">Mode Simulasi DEMO</span>
               </div>
             ) : lastError ? (
               <div className="flex items-center space-x-2">
-                <span className="w-3 h-3 rounded-full bg-red-500"></span>
-                <span className="text-base font-bold text-red-700">Koneksi Error</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                <span className="text-sm font-bold text-red-700">Koneksi Error</span>
               </div>
             ) : spreadsheetId ? (
               <div className="flex items-center space-x-2">
-                <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-base font-bold text-emerald-700">Terhubung ke Google Sheets</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-sm font-bold text-emerald-700">Terhubung Live</span>
               </div>
             ) : (
               <div className="flex items-center space-x-2">
-                <span className="w-3 h-3 rounded-full bg-slate-400"></span>
-                <span className="text-base font-bold text-slate-700">Menunggu Input URL Sheet</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                <span className="text-sm font-bold text-slate-700">Menunggu URL</span>
               </div>
             )}
-            <div className="text-xs text-slate-500 mt-1">
+            <div className="text-[11px] text-slate-500 mt-1 truncate">
               {isDemoMode
-                ? 'Menggunakan dataset simulasi PPIC Garment'
+                ? 'Dataset Simulasi PPIC Garment'
                 : spreadsheetId
-                ? `Target: Sheet '${sheetName || 'Rekap'}' (ID: ${spreadsheetId.slice(0, 12)}...)`
-                : 'Spreadsheet ID belum dikonfigurasi di Settings'}
+                ? `ID: ${spreadsheetId.slice(0, 14)}...`
+                : 'Belum dikonfigurasi'}
             </div>
           </div>
-          <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-2">
-            Metode: Direct Link &amp; GViz Live
+          <div className="text-[10px] text-slate-400 border-t border-slate-100 pt-1.5 flex items-center justify-between">
+            <span>Metode: {isDemoMode ? 'Lokal' : 'GViz Live & Direct'}</span>
+            <span className="text-emerald-600 font-semibold">Active</span>
           </div>
         </div>
 
-        {/* Target Sheet info */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+        {/* Target Sheet & Dynamic Range */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Lembar Kerja Acuan
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Rentang Data Terproses
             </span>
             <FileSpreadsheet className="w-4 h-4 text-slate-400" />
           </div>
-          <div className="my-3">
-            <div className="text-base font-bold text-slate-800">
+          <div className="my-2.5">
+            <div className="text-sm font-bold text-slate-800 truncate">
               Sheet: &quot;{sheetName || 'Rekap'}&quot;
             </div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              Struktur kolom B (OR) s/d J (Ket)
+            <div className="text-[11px] text-blue-700 font-medium mt-0.5">
+              {processedRangeInfo || 'Baris 1 s/d Terakhir (Dinamis)'}
             </div>
           </div>
-          <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-2 flex items-center space-x-1">
+          <div className="text-[10px] text-slate-400 border-t border-slate-100 pt-1.5 flex items-center space-x-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Tanpa Login Akun • Akses Link Viewer</span>
+            <span>Tanpa Batas Baris Statis</span>
           </div>
         </div>
 
-        {/* Sync Frequency & Cache */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+        {/* Ingested vs Valid Rows */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Baris Terbaca &amp; Valid
+            </span>
+            <CheckCircle2 className="w-4 h-4 text-slate-400" />
+          </div>
+          <div className="my-2.5">
+            <div className="flex items-baseline space-x-1.5">
+              <span className="text-xl font-bold text-slate-900">{items.length}</span>
+              <span className="text-xs text-slate-500">
+                / {rawRowCount !== undefined && rawRowCount > 0 ? rawRowCount : items.length} baris
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {items.length} material lolos validasi PPIC
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 border-t border-slate-100 pt-1.5">
+            100% Baris valid ditampilkan
+          </div>
+        </div>
+
+        {/* Last Sync Time & Status */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
               Sinkronisasi Terakhir
             </span>
             <Clock className="w-4 h-4 text-slate-400" />
           </div>
-          <div className="my-3">
-            <div className="text-lg font-bold text-slate-900">
+          <div className="my-2.5">
+            <div className="text-base font-bold text-slate-900">
               {lastSyncTime
                 ? lastSyncTime.toLocaleTimeString('id-ID', {
                     hour: '2-digit',
@@ -149,14 +178,14 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
                   })
                 : 'Belum pernah'}
             </div>
-            <div className="text-xs text-slate-500 mt-0.5">
+            <div className="text-[11px] text-slate-500 mt-0.5">
               {lastSyncTime
                 ? `${lastSyncTime.toLocaleDateString('id-ID', { dateStyle: 'medium' })}`
-                : 'Tekan tombol Refresh untuk memulai'}
+                : 'Klik tombol di atas untuk sinkron'}
             </div>
           </div>
-          <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-2">
-            Total {items.length} baris material tersimpan di memori
+          <div className="text-[10px] text-slate-400 border-t border-slate-100 pt-1.5">
+            Auto-Sync: Aktif setiap 60 detik
           </div>
         </div>
       </div>

@@ -116,7 +116,7 @@ export default function App() {
   // Critical Notification Modal
   const [isCriticalModalOpen, setIsCriticalModalOpen] = useState(false);
 
-  // Sync state
+  // Sync state & diagnostic metrics
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -124,6 +124,8 @@ export default function App() {
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
+  const [rawRowCount, setRawRowCount] = useState<number>(0);
+  const [processedRangeInfo, setProcessedRangeInfo] = useState<string>('');
 
   // Non-blocking toast notification
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -184,6 +186,8 @@ export default function App() {
         setRawItems(demoItems);
       }
 
+      setRawRowCount(demoItems.length);
+      setProcessedRangeInfo('Simulasi Garment PPIC Rekap (28 Baris)');
       setLastSyncTime(new Date());
       setLastError(null);
       setIsSyncing(false);
@@ -247,6 +251,8 @@ export default function App() {
         setRawItems(result.items);
       }
 
+      setRawRowCount(result.rawRowCount);
+      setProcessedRangeInfo(`Sheet '${result.activeSheetName}' • Baris 1 s/d ${result.rawRowCount} (Dinamis Tanpa Batas)`);
       setDetectedHeaders(result.detectedHeaders);
       setAvailableSheets(result.availableSheets);
       setLastSyncTime(new Date());
@@ -710,6 +716,8 @@ export default function App() {
               <SyncStatusView
                 spreadsheetId={settings.spreadsheetId}
                 sheetName={settings.sheetName}
+                rawRowCount={rawRowCount}
+                processedRangeInfo={processedRangeInfo}
                 isSyncing={isSyncing}
                 lastSyncTime={lastSyncTime}
                 lastError={lastError}

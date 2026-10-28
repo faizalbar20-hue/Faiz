@@ -1037,6 +1037,8 @@ export function calculateDashboardKpi(items: ParsedMaterialItem[]): PpicDashboar
 
 /**
  * Dynamically detects the header row and column mapping from a 2D array of spreadsheet values.
+ * Scans up to 50 rows to accommodate introductory metadata, instructions, or multi-line banners.
+ * Supports extensive Indonesian and English PPIC column naming conventions.
  */
 export function detectHeaderAndMapping(rows: unknown[][]): {
   headerRowIndex: number;
@@ -1060,37 +1062,122 @@ export function detectHeaderAndMapping(rows: unknown[][]): {
     return { headerRowIndex: 0, mapping: defaultMapping, detectedHeaders: [] };
   }
 
-  // Scan first 15 rows for header row
-  for (let r = 0; r < Math.min(15, rows.length); r++) {
+  // Scan first 50 rows for header row to handle sheets with top banners/logos
+  for (let r = 0; r < Math.min(50, rows.length); r++) {
     const row = rows[r];
     if (!Array.isArray(row)) continue;
 
-    const rowStrings = row.map(cell => String(cell || '').trim().toLowerCase());
+    const rowStrings = row.map((cell) => String(cell || '').trim().toLowerCase());
 
-    const hasOr = rowStrings.some(s => s === 'or' || s.includes('order ref') || s.startsWith('or '));
-    const hasStyle = rowStrings.some(s => s.includes('style') || s.includes('model'));
-    const hasProduct = rowStrings.some(s => s.includes('product') || s.includes('material') || s.includes('item'));
-    const hasQty = rowStrings.some(s => s.includes('quantity') || s === 'qty' || s.includes('kebutuhan'));
+    const hasOr = rowStrings.some(
+      (s) =>
+        s === 'or' ||
+        s.startsWith('or ') ||
+        s.includes('order') ||
+        s.includes('no or') ||
+        s.includes('spk') ||
+        s === 'po' ||
+        s.startsWith('po ')
+    );
+    const hasStyle = rowStrings.some(
+      (s) => s.includes('style') || s.includes('model') || s.includes('artikel')
+    );
+    const hasProduct = rowStrings.some(
+      (s) =>
+        s.includes('product') ||
+        s.includes('material') ||
+        s.includes('item') ||
+        s.includes('barang') ||
+        s.includes('deskripsi') ||
+        s.includes('description') ||
+        s.includes('uraian') ||
+        s.includes('kain')
+    );
+    const hasQty = rowStrings.some(
+      (s) =>
+        s.includes('quantity') ||
+        s === 'qty' ||
+        s.includes('kebutuhan') ||
+        s.includes('jumlah') ||
+        s.includes('jml') ||
+        s.includes('order qty')
+    );
 
-    // If at least 3 matching keywords found, this is the header row!
-    if ((hasOr && hasStyle) || (hasProduct && hasQty)) {
+    // If matching keywords found, this is the header row!
+    if ((hasOr && hasStyle) || (hasProduct && hasQty) || (hasOr && hasProduct)) {
       const mapping = { ...defaultMapping };
       rowStrings.forEach((colStr, idx) => {
-        if (colStr === 'or' || colStr.includes('order reference')) mapping.colOr = idx;
-        else if (colStr.includes('style')) mapping.colStyle = idx;
-        else if (colStr.includes('tanggal') || colStr.includes('date') || colStr.includes('update')) mapping.colDate = idx;
-        else if (colStr.includes('product') || colStr.includes('material') || colStr.includes('display name')) mapping.colProduct = idx;
-        else if (colStr.includes('received') || colStr.includes('terima')) mapping.colReceived = idx;
-        else if (colStr.includes('quantity') || colStr === 'qty' || colStr.includes('kebutuhan')) mapping.colQuantity = idx;
-        else if (colStr.includes('kurang') || colStr.includes('balance') || colStr.includes('selisih') || colStr.includes('kelebihan') || colStr.includes('sisa')) mapping.colBalance = idx;
-        else if (colStr.includes('satuan') || colStr.includes('unit') || colStr === 'uom') mapping.colUnit = idx;
-        else if (colStr === 'ket' || colStr.includes('status') || colStr.includes('keterangan')) mapping.colKet = idx;
+        if (
+          colStr === 'or' ||
+          colStr.includes('no or') ||
+          colStr.includes('nomor or') ||
+          colStr.includes('no. or') ||
+          colStr.includes('order') ||
+          colStr.includes('spk') ||
+          colStr === 'po'
+        ) {
+          mapping.colOr = idx;
+        } else if (colStr.includes('style') || colStr.includes('model') || colStr.includes('artikel')) {
+          mapping.colStyle = idx;
+        } else if (
+          colStr.includes('tanggal') ||
+          colStr.includes('tgl') ||
+          colStr.includes('date') ||
+          colStr.includes('update') ||
+          colStr.includes('waktu')
+        ) {
+          mapping.colDate = idx;
+        } else if (
+          colStr.includes('product') ||
+          colStr.includes('material') ||
+          colStr.includes('barang') ||
+          colStr.includes('deskripsi') ||
+          colStr.includes('description') ||
+          colStr.includes('uraian') ||
+          colStr.includes('display name') ||
+          colStr.includes('kain')
+        ) {
+          mapping.colProduct = idx;
+        } else if (
+          colStr.includes('received') ||
+          colStr.includes('terima') ||
+          colStr.includes('diterima') ||
+          colStr.includes('masuk') ||
+          colStr.includes('datang')
+        ) {
+          mapping.colReceived = idx;
+        } else if (
+          colStr.includes('quantity') ||
+          colStr === 'qty' ||
+          colStr.includes('kebutuhan') ||
+          colStr.includes('jumlah') ||
+          colStr.includes('jml')
+        ) {
+          mapping.colQuantity = idx;
+        } else if (
+          colStr.includes('kurang') ||
+          colStr.includes('balance') ||
+          colStr.includes('selisih') ||
+          colStr.includes('kelebihan') ||
+          colStr.includes('sisa')
+        ) {
+          mapping.colBalance = idx;
+        } else if (colStr.includes('satuan') || colStr.includes('unit') || colStr === 'uom') {
+          mapping.colUnit = idx;
+        } else if (
+          colStr === 'ket' ||
+          colStr.includes('status') ||
+          colStr.includes('keterangan') ||
+          colStr.includes('remarks')
+        ) {
+          mapping.colKet = idx;
+        }
       });
 
       return {
         headerRowIndex: r,
         mapping,
-        detectedHeaders: row.map(c => String(c || '').trim()),
+        detectedHeaders: row.map((c) => String(c || '').trim()),
       };
     }
   }

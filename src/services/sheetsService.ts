@@ -80,9 +80,15 @@ export async function fetchSheetViaGViz(
   const extractedGid = extractGid(spreadsheetId);
   const timeoutMs = options?.timeoutMs ?? 15000;
 
-  // Build GViz query URL with cache-busting timestamp
+  // Build GViz query URL with cache-busting timestamp and optional GID targeting
   const timestamp = Date.now();
-  let url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(targetSheet)}&_t=${timestamp}`;
+  let url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&_t=${timestamp}`;
+  if (targetSheet) {
+    url += `&sheet=${encodeURIComponent(targetSheet)}`;
+  }
+  if (extractedGid) {
+    url += `&gid=${extractedGid}`;
+  }
 
   const controller = new AbortController();
   let timedOut = false;
@@ -232,10 +238,13 @@ export function parseRowsToMaterialItems(
 
     let orNumber = String(row[activeMapping.colOr] || '').trim();
     let style = String(row[activeMapping.colStyle] || '').trim();
-    const product = String(row[activeMapping.colProduct] || '').trim();
+    let product = String(row[activeMapping.colProduct] || '').trim();
+
+    // Check if orNumber looks like a section header / subtotal rather than a valid OR
+    const isSubtotalHeader = /^(total|subtotal|grand\s*total|catatan|summary|rekap)/i.test(orNumber);
 
     // Forward-fill OR number if merged vertically in spreadsheet
-    if (orNumber) {
+    if (orNumber && !isSubtotalHeader) {
       lastSeenOr = orNumber;
     } else if (product && lastSeenOr) {
       orNumber = lastSeenOr;
@@ -248,23 +257,54 @@ export function parseRowsToMaterialItems(
       style = lastSeenStyle;
     }
 
+    // If product is empty, try to find material name from other columns
+    if (!product) {
+      for (let c = 0; c < row.length; c++) {
+        if (
+          c !== activeMapping.colOr &&
+          c !== activeMapping.colStyle &&
+          c !== activeMapping.colDate &&
+          c !== activeMapping.colQuantity &&
+          c !== activeMapping.colReceived &&
+          c !== activeMapping.colBalance &&
+          c !== activeMapping.colUnit &&
+          c !== activeMapping.colKet
+        ) {
+          const val = String(row[c] || '').trim();
+          if (val && isNaN(Number(val)) && val.length >= 2) {
+            product = val;
+            break;
+          }
+        }
+      }
+    }
+
     // If both product and OR are completely absent, skip this non-data row
     if (!product && !orNumber) continue;
 
-    const rawItem: RawSheetRow = {
-      rowIndex: r + 1,
-      orNumber: orNumber || '-',
-      style: style || '-',
-      updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
-      productDisplayName: product || (orNumber ? `Item ${orNumber}` : '-'),
-      quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
-      receivedQtyRaw: (row[activeMapping.colReceived] as string | number | undefined) ?? 0,
-      balanceRaw: (row[activeMapping.colBalance] as string | number | undefined) ?? 0,
-      unit: String(row[activeMapping.colUnit] || '').trim(),
-      ketRaw: String(row[activeMapping.colKet] || '').trim(),
-    };
+    // Skip subtotal / divider rows that have no material product
+    const rawQty = row[activeMapping.colQuantity];
+    const rawRec = row[activeMapping.colReceived];
+    if (isSubtotalHeader && !product) continue;
 
-    items.push(parseRawRow(rawItem, weights, referenceDate));
+    try {
+      const rawItem: RawSheetRow = {
+        rowIndex: r + 1,
+        orNumber: orNumber || '-',
+        style: style || '-',
+        updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
+        productDisplayName: product || (orNumber ? `Item ${orNumber}` : `Baris #${r + 1}`),
+        quantityRaw: (rawQty as string | number | undefined) ?? 0,
+        receivedQtyRaw: (rawRec as string | number | undefined) ?? 0,
+        balanceRaw: (row[activeMapping.colBalance] as string | number | undefined) ?? 0,
+        unit: String(row[activeMapping.colUnit] || '').trim(),
+        ketRaw: String(row[activeMapping.colKet] || '').trim(),
+      };
+
+      items.push(parseRawRow(rawItem, weights, referenceDate));
+    } catch (rowErr) {
+      console.warn(`[PPIC Service] Gagal mem-parse baris #${r + 1}:`, rowErr);
+    }
   }
 
   return {
@@ -388,7 +428,8 @@ export async function fetchLiveSheetData(params: {
       const cleanId = extractSpreadsheetId(spreadsheetId);
       const targetSheet = sheetName.trim() || 'Rekap';
       // Dynamic unbounded range to capture all rows added to the spreadsheet (no fixed !A:Z restriction)
-      const range = encodeURIComponent(targetSheet);
+      const formattedRange = targetSheet.includes(' ') ? `'${targetSheet}'` : targetSheet;
+      const range = encodeURIComponent(formattedRange);
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${range}?valueRenderOption=FORMATTED_VALUE&_t=${Date.now()}`;
 
       const res = await fetch(url, {

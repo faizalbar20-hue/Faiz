@@ -204,5 +204,71 @@ test('Google Sheets Service - Dynamic Appended Rows & Edge Cases (Scenarios A-G)
     assert.strictEqual(items[0].orNumber, 'OR 901');
     assert.strictEqual(items[1].orNumber, 'OR 902');
   });
+
+  await t.test('Scenario H: Mid-string quotes (inch symbols like 7" or 1/2") in CSV text do NOT truncate subsequent rows', async () => {
+    const { parseCsv } = await import('../utils/csvParser');
+    const csvWithInchQuotes = `OR,STYLE,MATERIAL,DATE,QTY,REC,BAL,UNIT,KET
+OR 1001,POLO A,COTTON COMBED,2026-10-20,100,100,0,KG,OKE
+OR 1001,POLO A,ZIPPER 7" METAL,2026-10-20,50,50,0,PCS,OKE
+OR 1002,POLO B,BUTTON 1/2" PEARL,2026-10-20,200,200,0,PCS,OKE
+OR 1003,POLO C,WOVEN LABEL 2"X3",2026-10-20,300,300,0,PCS,OKE
+OR 1004,POLO D,POLYBAG 30X40",2026-10-20,500,500,0,PCS,OKE
+`;
+
+    const parsedRawRows = parseCsv(csvWithInchQuotes);
+    assert.strictEqual(parsedRawRows.length, 6, 'Must parse header + all 5 data rows without truncation');
+
+    const { items } = parseRowsToMaterialItems(parsedRawRows, mockWeights);
+    assert.strictEqual(items.length, 5, 'All 5 material rows must be parsed successfully');
+    assert.ok(items.some((i) => i.materialName.includes('ZIPPER 7" METAL')));
+    assert.ok(items.some((i) => i.materialName.includes('BUTTON 1/2" PEARL')));
+    assert.ok(items.some((i) => i.materialName.includes('WOVEN LABEL 2"X3"')));
+    assert.ok(items.some((i) => i.materialName.includes('POLYBAG 30X40"')));
+  });
+
+  await t.test('Scenario I: Semicolon delimited CSV (Indonesian Regional Settings) is automatically recognized', async () => {
+    const { parseCsv } = await import('../utils/csvParser');
+    const semiCsv = `OR;STYLE;PRODUK / MATERIAL;TGL UPDATE;KEBUTUHAN;TERIMA;SISA;SATUAN;KET
+OR 2001;JAKET X;KAIN FLEECE;2026-10-20;500;500;0;KG;OKE
+OR 2002;JAKET Y;RIB LEHER;2026-10-20;100;100;0;PCS;OKE
+`;
+
+    const parsedRawRows = parseCsv(semiCsv);
+    assert.strictEqual(parsedRawRows.length, 3);
+    const { items } = parseRowsToMaterialItems(parsedRawRows, mockWeights);
+    assert.strictEqual(items.length, 2);
+    assert.strictEqual(items[0].orNumber, 'OR 2001');
+    assert.strictEqual(items[1].orNumber, 'OR 2002');
+  });
+
+  await t.test('Scenario J: Subtotal / divider rows in the middle do not hijack OR forward-fill for subsequent items', () => {
+    const rawRows = [
+      header,
+      ['OR 3001', 'TSHIRT A', 'COTTON 24S', '2026-10-20', 300, 300, 0, 'KG', 'OKE'],
+      ['', '', 'BENANG 40/2', '2026-10-20', 50, 50, 0, 'CONE', 'OKE'],
+      ['SUBTOTAL OR 3001', '', '', '', 350, 350, 0, '', ''], // Subtotal row
+      // Appended new item for OR 3001 after subtotal row
+      ['', '', 'HANGTAG BARCODE', '2026-10-22', 300, 300, 0, 'PCS', 'OKE'],
+    ];
+
+    const { items } = parseRowsToMaterialItems(rawRows, mockWeights);
+    assert.strictEqual(items.length, 3, 'Must parse the 3 material rows and skip subtotal');
+    assert.strictEqual(items[2].orNumber, 'OR 3001', 'OR 3001 must be preserved and not overwritten by SUBTOTAL');
+    assert.strictEqual(items[2].materialName, 'HANGTAG BARCODE');
+  });
+
+  await t.test('Scenario K: Adjacent column fallback captures material when product column is in adjacent cell', () => {
+    const customHeader = ['OR', 'STYLE', 'TGL UPDATE', 'KODE', 'DESKRIPSI BARANG', 'KEBUTUHAN', 'TERIMA', 'SISA', 'SATUAN', 'KET'];
+    const rawRows = [
+      customHeader,
+      // Here column 3 is KODE and column 4 is DESKRIPSI BARANG
+      ['OR 4001', 'PARKA 01', '2026-10-20', 'NYL-001', 'NYLON TASLAN WATERPROOF', 600, 600, 0, 'YDS', 'OKE'],
+    ];
+
+    const { items } = parseRowsToMaterialItems(rawRows, mockWeights);
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].orNumber, 'OR 4001');
+    assert.ok(items[0].materialName.includes('NYLON TASLAN') || items[0].materialCode.includes('NYL-001'));
+  });
 });
 
