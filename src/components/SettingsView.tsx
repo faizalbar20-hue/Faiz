@@ -66,7 +66,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveSettings(formState);
+    const cleanId = formState.spreadsheetId?.trim();
+    const cleanScript = formState.appsScriptUrl?.trim();
+    const updatedSettings = {
+      ...formState,
+      useDemoData: cleanId || cleanScript ? false : formState.useDemoData,
+    };
+    onSaveSettings(updatedSettings);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
   };

@@ -786,41 +786,33 @@ export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): Parsed
       continue;
     }
 
-    // Multiple rows exist for this exact material requirement.
-    // Determine the newest/latest update row:
-    // 1. Sort by updateDate descending if both have valid dates.
-    // 2. If dates are equal or one is missing, sort by rowIndex descending (newest appended row at the bottom wins).
-    const sorted = [...list].sort((a, b) => {
-      const timeA = a.updateDate instanceof Date && !isNaN(a.updateDate.getTime()) ? a.updateDate.getTime() : null;
-      const timeB = b.updateDate instanceof Date && !isNaN(b.updateDate.getTime()) ? b.updateDate.getTime() : null;
+    // Check if the rows in this group are explicit updates with distinct dates
+    const dates = list
+      .map((i) => (i.updateDate instanceof Date && !isNaN(i.updateDate.getTime()) ? i.updateDate.getTime() : null))
+      .filter((t) => t !== null) as number[];
 
-      // If both have valid update dates and they differ: newer date wins
-      if (timeA !== null && timeB !== null && timeA !== timeB) {
-        return timeB - timeA;
-      }
+    const hasDistinctValidDates = dates.length >= 2 && new Set(dates).size > 1;
 
-      // If one has date and the other doesn't:
-      // If the row without date is placed lower in the sheet (higher rowIndex) and has updated status or receivedQty,
-      // it represents the latest live operational state.
-      if (timeA !== null && timeB === null) {
-        if (b.rowIndex > a.rowIndex && (b.receivedQty !== a.receivedQty || b.sourceStatus !== a.sourceStatus)) {
-          return 1; // b is newer
+    if (hasDistinctValidDates) {
+      // Legitimate update history on the same demand line: pick the newest update date
+      const sorted = [...list].sort((a, b) => {
+        const timeA = a.updateDate instanceof Date && !isNaN(a.updateDate.getTime()) ? a.updateDate.getTime() : 0;
+        const timeB = b.updateDate instanceof Date && !isNaN(b.updateDate.getTime()) ? b.updateDate.getTime() : 0;
+        if (timeA !== timeB) return timeB - timeA;
+        return b.rowIndex - a.rowIndex;
+      });
+      result.push(sorted[0]);
+    } else {
+      // Check for exact byte-for-byte duplicates vs distinct independent spreadsheet rows
+      const seenExact = new Set<string>();
+      for (const item of list) {
+        const exactKey = `${item.orNumber}|${item.style}|${item.materialCode}|${item.quantity}|${item.receivedQty}|${item.recordedBalance}|${item.sourceStatus}|${item.updateDateFormatted}`;
+        if (!seenExact.has(exactKey)) {
+          seenExact.add(exactKey);
+          result.push(item);
         }
-        return -1; // a has date
       }
-      if (timeA === null && timeB !== null) {
-        if (a.rowIndex > b.rowIndex && (a.receivedQty !== b.receivedQty || a.sourceStatus !== b.sourceStatus)) {
-          return -1; // a is newer
-        }
-        return 1; // b has date
-      }
-
-      // If dates are identical or both missing: the row lower down in the spreadsheet is the newer entry
-      return b.rowIndex - a.rowIndex;
-    });
-
-    // The first item in sorted is the latest update
-    result.push(sorted[0]);
+    }
   }
 
   // Sort by original rowIndex ascending to keep natural spreadsheet flow
