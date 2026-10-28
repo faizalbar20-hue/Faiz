@@ -85,12 +85,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     formState.riskWeights.staleWeight +
     formState.riskWeights.inconsistencyWeight;
 
-  const sampleAppsScriptCode = `function doGet() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Rekap");
-  if (!sheet) {
-    sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  const sampleAppsScriptCode = `function doGet(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Rekap") || ss.getSheets()[0];
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) {
+    return ContentService.createTextOutput(JSON.stringify([]))
+      .setMimeType(ContentService.MimeType.JSON);
   }
-  var data = sheet.getDataRange().getValues();
+  // Membaca seluruh baris dinamis dari baris 1 sampai baris terbawah (mencakup baris baru)
+  var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }`;

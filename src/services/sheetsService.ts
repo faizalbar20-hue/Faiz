@@ -174,7 +174,45 @@ export async function fetchSheetViaGViz(
     );
   }
 
-  // Detect header row and column mapping
+  const { items, mapping: activeMapping, detectedHeaders, headerRowIndex } = parseRowsToMaterialItems(
+    rawRows,
+    weights,
+    customMapping
+  );
+
+  if (items.length === 0) {
+    throw new SheetsApiError(
+      `Tidak ditemukan baris material valid setelah baris header #${headerRowIndex + 1} pada sheet '${targetSheet}'. Pastikan kolom produk atau OR terisi.`,
+      'NO_VALID_DATA'
+    );
+  }
+
+  return {
+    items,
+    availableSheets: [targetSheet],
+    activeSheetName: targetSheet,
+    detectedHeaders,
+    mapping: activeMapping,
+    rawRowCount: rawRows.length,
+    sourceType: 'GVIZ_LIVE',
+  };
+}
+
+/**
+ * Parses raw 2D sheet rows into rich ParsedMaterialItem objects.
+ * Dynamically processes all rows from the header row down to the last row,
+ * supporting forward-fill for merged cells and handling incomplete or draft rows gracefully.
+ */
+export function parseRowsToMaterialItems(
+  rawRows: unknown[][],
+  weights: RiskWeightsConfig,
+  customMapping?: ColumnMappingConfig
+): {
+  items: ParsedMaterialItem[];
+  headerRowIndex: number;
+  mapping: ColumnMappingConfig;
+  detectedHeaders: string[];
+} {
   const { headerRowIndex, mapping: detectedMapping, detectedHeaders } = detectHeaderAndMapping(rawRows);
   const activeMapping = customMapping || detectedMapping;
 
@@ -186,7 +224,7 @@ export async function fetchSheetViaGViz(
   let lastSeenStyle = '';
 
   for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
-    const row = rawRows[r];
+    const row = rawRows[r] as unknown[];
     if (!Array.isArray(row) || row.length === 0) continue;
 
     const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
@@ -210,14 +248,15 @@ export async function fetchSheetViaGViz(
       style = lastSeenStyle;
     }
 
+    // If both product and OR are completely absent, skip this non-data row
     if (!product && !orNumber) continue;
 
     const rawItem: RawSheetRow = {
       rowIndex: r + 1,
-      orNumber,
-      style,
+      orNumber: orNumber || '-',
+      style: style || '-',
       updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
-      productDisplayName: product,
+      productDisplayName: product || (orNumber ? `Item ${orNumber}` : '-'),
       quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
       receivedQtyRaw: (row[activeMapping.colReceived] as string | number | undefined) ?? 0,
       balanceRaw: (row[activeMapping.colBalance] as string | number | undefined) ?? 0,
@@ -225,25 +264,14 @@ export async function fetchSheetViaGViz(
       ketRaw: String(row[activeMapping.colKet] || '').trim(),
     };
 
-    const parsed = parseRawRow(rawItem, weights, referenceDate);
-    items.push(parsed);
-  }
-
-  if (items.length === 0) {
-    throw new SheetsApiError(
-      `Tidak ditemukan baris material valid setelah baris header #${headerRowIndex + 1} pada sheet '${targetSheet}'. Pastikan kolom produk atau OR terisi.`,
-      'NO_VALID_DATA'
-    );
+    items.push(parseRawRow(rawItem, weights, referenceDate));
   }
 
   return {
     items,
-    availableSheets: [targetSheet],
-    activeSheetName: targetSheet,
-    detectedHeaders,
+    headerRowIndex,
     mapping: activeMapping,
-    rawRowCount: rawRows.length,
-    sourceType: 'GVIZ_LIVE',
+    detectedHeaders,
   };
 }
 
@@ -285,6 +313,7 @@ export async function fetchSheetViaAppsScript(
   let res: Response;
   try {
     res = await fetch(cacheBustedUrl, {
+      cache: 'no-store',
       signal: controller.signal,
     });
   } catch (err: unknown) {
@@ -317,54 +346,11 @@ export async function fetchSheetViaAppsScript(
     throw new SheetsApiError('Data yang dikembalikan dari Apps Script kosong.', 'EMPTY_DATA');
   }
 
-  const { headerRowIndex, mapping: detectedMapping, detectedHeaders } = detectHeaderAndMapping(rawRows);
-  const activeMapping = customMapping || detectedMapping;
-
-  const items: ParsedMaterialItem[] = [];
-  const referenceDate = new Date();
-  let lastSeenOr = '';
-  let lastSeenStyle = '';
-
-  for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
-    const row = rawRows[r] as unknown[];
-    if (!Array.isArray(row) || row.length === 0) continue;
-
-    const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
-    if (isAllEmpty) continue;
-
-    let orNumber = String(row[activeMapping.colOr] || '').trim();
-    let style = String(row[activeMapping.colStyle] || '').trim();
-    const product = String(row[activeMapping.colProduct] || '').trim();
-
-    if (orNumber) {
-      lastSeenOr = orNumber;
-    } else if (product && lastSeenOr) {
-      orNumber = lastSeenOr;
-    }
-
-    if (style) {
-      lastSeenStyle = style;
-    } else if (product && lastSeenStyle) {
-      style = lastSeenStyle;
-    }
-
-    if (!product && !orNumber) continue;
-
-    const rawItem: RawSheetRow = {
-      rowIndex: r + 1,
-      orNumber,
-      style,
-      updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
-      productDisplayName: product,
-      quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
-      receivedQtyRaw: (row[activeMapping.colReceived] as string | number | undefined) ?? 0,
-      balanceRaw: (row[activeMapping.colBalance] as string | number | undefined) ?? 0,
-      unit: String(row[activeMapping.colUnit] || '').trim(),
-      ketRaw: String(row[activeMapping.colKet] || '').trim(),
-    };
-
-    items.push(parseRawRow(rawItem, weights, referenceDate));
-  }
+  const { items, mapping: activeMapping, detectedHeaders } = parseRowsToMaterialItems(
+    rawRows,
+    weights,
+    customMapping
+  );
 
   return {
     items,
@@ -401,14 +387,15 @@ export async function fetchLiveSheetData(params: {
     try {
       const cleanId = extractSpreadsheetId(spreadsheetId);
       const targetSheet = sheetName.trim() || 'Rekap';
-      // Dynamic unbounded range to capture all rows added to the spreadsheet
-      const range = `'${targetSheet}'!A:Z`;
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE&_t=${Date.now()}`;
+      // Dynamic unbounded range to capture all rows added to the spreadsheet (no fixed !A:Z restriction)
+      const range = encodeURIComponent(targetSheet);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${range}?valueRenderOption=FORMATTED_VALUE&_t=${Date.now()}`;
 
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        cache: 'no-store',
         signal,
       });
 
@@ -416,52 +403,11 @@ export async function fetchLiveSheetData(params: {
         const json = await res.json();
         const rawRows: unknown[][] = json.values || [];
         if (rawRows.length > 0) {
-          const { headerRowIndex, mapping: detectedMapping, detectedHeaders } = detectHeaderAndMapping(rawRows);
-          const activeMapping = customMapping || detectedMapping;
-          const items: ParsedMaterialItem[] = [];
-          const referenceDate = new Date();
-          let lastSeenOr = '';
-          let lastSeenStyle = '';
-
-          for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
-            const row = rawRows[r];
-            if (!Array.isArray(row) || row.length === 0) continue;
-
-            const isAllEmpty = row.every((c) => !c || String(c).trim() === '');
-            if (isAllEmpty) continue;
-
-            let orNumber = String(row[activeMapping.colOr] || '').trim();
-            let style = String(row[activeMapping.colStyle] || '').trim();
-            const product = String(row[activeMapping.colProduct] || '').trim();
-
-            if (orNumber) {
-              lastSeenOr = orNumber;
-            } else if (product && lastSeenOr) {
-              orNumber = lastSeenOr;
-            }
-
-            if (style) {
-              lastSeenStyle = style;
-            } else if (product && lastSeenStyle) {
-              style = lastSeenStyle;
-            }
-
-            if (!product && !orNumber) continue;
-
-            const rawItem: RawSheetRow = {
-              rowIndex: r + 1,
-              orNumber,
-              style,
-              updateDateRaw: String(row[activeMapping.colDate] || '').trim(),
-              productDisplayName: product,
-              quantityRaw: (row[activeMapping.colQuantity] as string | number | undefined) ?? 0,
-              receivedQtyRaw: (row[activeMapping.colReceived] as string | number | undefined) ?? 0,
-              balanceRaw: (row[activeMapping.colBalance] as string | number | undefined) ?? 0,
-              unit: String(row[activeMapping.colUnit] || '').trim(),
-              ketRaw: String(row[activeMapping.colKet] || '').trim(),
-            };
-            items.push(parseRawRow(rawItem, weights, referenceDate));
-          }
+          const { items, mapping: activeMapping, detectedHeaders } = parseRowsToMaterialItems(
+            rawRows,
+            weights,
+            customMapping
+          );
 
           if (items.length > 0) {
             return {

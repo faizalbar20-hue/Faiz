@@ -742,22 +742,21 @@ export function parseRawRow(
 }
 
 /**
- * Filters material rows so that for each unique OR + Material combination,
- * only the row(s) with the most recent updateDate are preserved.
- *
- * Rules:
- * - Group key: `${orNumber}___${materialCode}` (fallback: productDisplayName).
- * - If multiple rows exist for the same material in the same OR:
- *   - Sort by updateDate descending (with valid dates taking precedence over null/invalid dates).
- *   - Keep only the rows matching the latest updateDate.
- * - Distinct materials within the same OR are ALWAYS preserved (e.g., fabric vs thread vs buttons).
+ * Filters material rows so that for each unique OR + Material requirement:
+ * - Distinct materials within the same OR are ALWAYS preserved (e.g. fabrics, buttons, zippers).
  * - Distinct ORs are ALWAYS preserved.
- * - If a material has no valid update date at all, it is retained (with a validation flag) so data is never silently dropped.
+ * - Distinct requirement details (e.g. different quantities, units, or remarks) are strictly preserved.
+ * - For multiple update rows representing the same requirement:
+ *   - The row with the most recent updateDate is selected.
+ *   - If updateDate is missing or identical, the newly appended row at the bottom (higher rowIndex) is selected.
+ *   - New rows are NEVER discarded just because an older row had a valid date.
+ * - Exact duplicate rows are cleanly consolidated to 1 instance.
  */
 export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): ParsedMaterialItem[] {
   if (!items || items.length <= 1) return items;
 
-  // Group by OR and Material Identity (OR, Style, Code/Name, Unit)
+  // Group by OR, Style, Material Identity, Unit, and Quantity Requirement
+  // Including quantity in groupKey ensures distinct material demand lines are never collapsed
   const groups = new Map<string, ParsedMaterialItem[]>();
 
   for (const item of items) {
@@ -766,8 +765,10 @@ export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): Parsed
     const codeKey = (item.materialCode && item.materialCode !== '-' ? item.materialCode : '').trim().toUpperCase();
     const nameKey = (item.materialName || item.productDisplayName || '-').trim().toUpperCase();
     const unitKey = (item.unit || '').trim().toUpperCase();
-    // Multi-attribute groupKey ensures distinct materials in the same OR are strictly preserved
-    const groupKey = `${orKey}___${styleKey}___${codeKey || nameKey}___${nameKey}___${unitKey}`;
+    const qtyKey = String(item.quantity);
+
+    // Grouping key: OR + Style + Material Code/Name + Unit + Quantity
+    const groupKey = `${orKey}___${styleKey}___${codeKey || nameKey}___${nameKey}___${unitKey}___${qtyKey}`;
 
     let list = groups.get(groupKey);
     if (!list) {
@@ -785,33 +786,41 @@ export function filterLatestMaterialUpdates(items: ParsedMaterialItem[]): Parsed
       continue;
     }
 
-    // Multiple rows for this OR + Material pair.
-    // Find the latest valid date timestamp
-    let maxTime: number | null = null;
-    for (const item of list) {
-      if (item.updateDate instanceof Date && !isNaN(item.updateDate.getTime())) {
-        const t = item.updateDate.getTime();
-        if (maxTime === null || t > maxTime) {
-          maxTime = t;
+    // Multiple rows exist for this exact material requirement.
+    // Determine the newest/latest update row:
+    // 1. Sort by updateDate descending if both have valid dates.
+    // 2. If dates are equal or one is missing, sort by rowIndex descending (newest appended row at the bottom wins).
+    const sorted = [...list].sort((a, b) => {
+      const timeA = a.updateDate instanceof Date && !isNaN(a.updateDate.getTime()) ? a.updateDate.getTime() : null;
+      const timeB = b.updateDate instanceof Date && !isNaN(b.updateDate.getTime()) ? b.updateDate.getTime() : null;
+
+      // If both have valid update dates and they differ: newer date wins
+      if (timeA !== null && timeB !== null && timeA !== timeB) {
+        return timeB - timeA;
+      }
+
+      // If one has date and the other doesn't:
+      // If the row without date is placed lower in the sheet (higher rowIndex) and has updated status or receivedQty,
+      // it represents the latest live operational state.
+      if (timeA !== null && timeB === null) {
+        if (b.rowIndex > a.rowIndex && (b.receivedQty !== a.receivedQty || b.sourceStatus !== a.sourceStatus)) {
+          return 1; // b is newer
         }
+        return -1; // a has date
       }
-    }
-
-    if (maxTime !== null) {
-      // Keep only rows matching the latest timestamp
-      const latestRows = list.filter(
-        (item) => item.updateDate instanceof Date && !isNaN(item.updateDate.getTime()) && item.updateDate.getTime() === maxTime
-      );
-      if (latestRows.length > 0) {
-        result.push(...latestRows);
-        continue;
+      if (timeA === null && timeB !== null) {
+        if (a.rowIndex > b.rowIndex && (a.receivedQty !== b.receivedQty || a.sourceStatus !== b.sourceStatus)) {
+          return -1; // a is newer
+        }
+        return 1; // b has date
       }
-    }
 
-    // If no valid dates at all, pick the last row by rowIndex
-    const latestRowIndex = Math.max(...list.map((i) => i.rowIndex));
-    const fallbackRow = list.find((i) => i.rowIndex === latestRowIndex) || list[list.length - 1];
-    result.push(fallbackRow);
+      // If dates are identical or both missing: the row lower down in the spreadsheet is the newer entry
+      return b.rowIndex - a.rowIndex;
+    });
+
+    // The first item in sorted is the latest update
+    result.push(sorted[0]);
   }
 
   // Sort by original rowIndex ascending to keep natural spreadsheet flow
@@ -1071,9 +1080,9 @@ export function detectHeaderAndMapping(rows: unknown[][]): {
         else if (colStr.includes('style')) mapping.colStyle = idx;
         else if (colStr.includes('tanggal') || colStr.includes('date') || colStr.includes('update')) mapping.colDate = idx;
         else if (colStr.includes('product') || colStr.includes('material') || colStr.includes('display name')) mapping.colProduct = idx;
-        else if (colStr.includes('received') || colStr.includes('diterima')) mapping.colReceived = idx;
+        else if (colStr.includes('received') || colStr.includes('terima')) mapping.colReceived = idx;
         else if (colStr.includes('quantity') || colStr === 'qty' || colStr.includes('kebutuhan')) mapping.colQuantity = idx;
-        else if (colStr.includes('kurang') || colStr.includes('balance') || colStr.includes('selisih') || colStr.includes('kelebihan')) mapping.colBalance = idx;
+        else if (colStr.includes('kurang') || colStr.includes('balance') || colStr.includes('selisih') || colStr.includes('kelebihan') || colStr.includes('sisa')) mapping.colBalance = idx;
         else if (colStr.includes('satuan') || colStr.includes('unit') || colStr === 'uom') mapping.colUnit = idx;
         else if (colStr === 'ket' || colStr.includes('status') || colStr.includes('keterangan')) mapping.colKet = idx;
       });

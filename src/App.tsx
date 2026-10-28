@@ -225,16 +225,24 @@ export default function App() {
         signal: abortController.signal,
       });
 
-      // Compute robust data fingerprint to immediately detect newly appended rows and cell edits
-      let qtyChecksum = 0;
+      // Compute comprehensive checksum across all rows to detect appended rows, deletions, or cell-level edits
+      let changeChecksum = 0;
       for (let i = 0; i < result.items.length; i++) {
-        qtyChecksum = (qtyChecksum + result.items[i].quantity + result.items[i].receivedQty) % 10000000;
+        const item = result.items[i];
+        changeChecksum = (
+          changeChecksum +
+          item.quantity * 17 +
+          item.receivedQty * 31 +
+          item.rowIndex * 53 +
+          (item.readinessStatus.charCodeAt(0) || 0) * 11 +
+          (item.updateDate ? item.updateDate.getTime() % 100000 : 0)
+        ) % 100000007;
       }
-      const firstRow = result.items[0];
-      const lastRow = result.items[result.items.length - 1];
-      const newFingerprint = `${result.rawRowCount}:${result.items.length}:${qtyChecksum}:${firstRow?.id || ''}:${lastRow?.id || ''}_${lastRow?.receivedQty || ''}`;
+      const newFingerprint = `${result.rawRowCount}:${result.items.length}:${changeChecksum}`;
 
-      if (newFingerprint !== lastFingerprintRef.current) {
+      // When manual refresh is triggered, ALWAYS force update to the freshly fetched dataset.
+      // During background auto-sync, update whenever data has changed.
+      if (isManual || newFingerprint !== lastFingerprintRef.current) {
         lastFingerprintRef.current = newFingerprint;
         setRawItems(result.items);
       }
@@ -243,6 +251,13 @@ export default function App() {
       setAvailableSheets(result.availableSheets);
       setLastSyncTime(new Date());
       setLastError(null);
+
+      if (isManual) {
+        showToast(
+          `Sinkronisasi berhasil! Terbaca ${result.items.length} baris data dari Google Sheets '${result.activeSheetName}'.`,
+          'success'
+        );
+      }
 
       const log: SyncLogEntry = {
         id: String(Date.now()),
@@ -489,7 +504,7 @@ export default function App() {
       {/* Top Navbar with Critical Bell Notification */}
       <Navbar
         isSyncing={isSyncing}
-        onManualRefresh={syncData}
+        onManualRefresh={() => syncData(true)}
         lastSyncTime={lastSyncTime}
         syncIntervalSeconds={settings.syncIntervalSeconds}
         autoSyncEnabled={settings.autoSyncEnabled}
@@ -700,7 +715,7 @@ export default function App() {
                 lastError={lastError}
                 syncLogs={syncLogs}
                 items={items}
-                onManualRefresh={syncData}
+                onManualRefresh={() => syncData(true)}
                 isDemoMode={settings.useDemoData}
                 detectedHeaders={detectedHeaders}
               />
