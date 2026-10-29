@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   History,
   FileSpreadsheet,
+  Upload,
 } from 'lucide-react';
 import { SyncLogEntry, ParsedMaterialItem } from '../types/ppic';
 
@@ -24,6 +25,9 @@ interface SyncStatusViewProps {
   onManualRefresh: () => void;
   isDemoMode: boolean;
   detectedHeaders: string[];
+  excelBatchesCount?: number;
+  excelItemsCount?: number;
+  onNavigateToUpload?: () => void;
 }
 
 export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
@@ -39,6 +43,9 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
   onManualRefresh,
   isDemoMode,
   detectedHeaders,
+  excelBatchesCount = 0,
+  excelItemsCount = 0,
+  onNavigateToUpload,
 }) => {
   const issueItems = items.filter(
     (i) => i.readinessStatus === 'CHECK DATA' || i.hasDiscrepancy || i.validationWarnings.length > 0
@@ -66,6 +73,30 @@ export const SyncStatusView: React.FC<SyncStatusViewProps> = ({
             <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Ulang Sekarang'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Multi-Source Dual Integration Card */}
+      <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-5 rounded-xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 border border-slate-800">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 border border-blue-400/30 text-blue-300">
+              DUAL SOURCE INTEGRATION
+            </span>
+            <h3 className="text-sm font-bold text-white">Google Spreadsheet &amp; Upload Excel Terpadu</h3>
+          </div>
+          <p className="text-xs text-slate-300">
+            Aplikasi memadukan pembacaan histori Google Sheets dengan <strong>{excelBatchesCount} kelompok upload Excel</strong> ({excelItemsCount} material) tanpa saling menimpa data.
+          </p>
+        </div>
+        {onNavigateToUpload && (
+          <button
+            onClick={onNavigateToUpload}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center space-x-1.5 shrink-0 self-start md:self-center shadow-xs"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Buka Menu Upload Excel &rarr;</span>
+          </button>
+        )}
       </div>
 
       {/* Connection & Ingestion Diagnostic Cards */}

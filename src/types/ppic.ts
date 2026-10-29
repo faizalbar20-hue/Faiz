@@ -100,6 +100,17 @@ export interface ParsedMaterialItem {
   // Follow-Up tracking
   followUp?: MaterialFollowUp;
 
+  // Data Source & Excel Upload Metadata
+  source?: 'GOOGLE_SHEETS' | 'EXCEL_UPLOAD';
+  batchId?: string;
+  uploadFileName?: string;
+  dataDate?: string; // YYYY-MM-DD
+  uploadedAt?: string; // ISO string
+  kekurangan?: number; // Rumus: Diterima - Kebutuhan (Kekurangan < 0 = BELUM READY, Kekurangan >= 0 = READY)
+  needsReview?: boolean;
+  reviewReasons?: string[];
+  rawDisplayName?: string;
+
   // Risk Evaluation
   shortageRiskScore: number; // 0 - 100
   staleRiskScore: number; // 0 - 100
@@ -196,3 +207,32 @@ export interface SyncLogEntry {
   durationMs?: number;
   source: 'GOOGLE_SHEETS' | 'DEMO_DATA';
 }
+
+export interface ExcelUploadBatch {
+  id: string; // unique batch identifier
+  orNumber: string; // e.g. "OR 1096"
+  dataDate: string; // YYYY-MM-DD
+  fileName: string;
+  uploadedAt: string; // ISO date string
+  source: 'EXCEL_UPLOAD';
+  sheetName?: string;
+  totalRows: number;
+  validRows: number;
+  reviewRows: number;
+  rejectedRows: number;
+  rejectedReasons?: string[];
+  items: ParsedMaterialItem[];
+}
+
+export interface ExcelParseSummary {
+  fileName: string;
+  sheetNames: string[];
+  selectedSheet: string;
+  totalRowsRead: number;
+  validRowsCount: number;
+  reviewRowsCount: number;
+  rejectedRowsCount: number;
+  rejectedReasons: string[];
+  items: ParsedMaterialItem[];
+}
+

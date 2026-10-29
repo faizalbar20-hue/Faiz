@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Clock, FileSpreadsheet, Bell } from 'lucide-react';
+import { RefreshCw, Clock, FileSpreadsheet, Bell, Upload } from 'lucide-react';
 
 interface NavbarProps {
   isSyncing: boolean;
@@ -13,6 +13,7 @@ interface NavbarProps {
   sheetName: string;
   criticalCount: number;
   onOpenCriticalNotifications: () => void;
+  onNavigateToUpload?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = React.memo(({
@@ -27,6 +28,7 @@ export const Navbar: React.FC<NavbarProps> = React.memo(({
   sheetName,
   criticalCount,
   onOpenCriticalNotifications,
+  onNavigateToUpload,
 }) => {
   // Localized countdown ticker so parent App component does not re-render every second
   const [countdown, setCountdown] = useState<number>(syncIntervalSeconds);
@@ -126,6 +128,18 @@ export const Navbar: React.FC<NavbarProps> = React.memo(({
                 </span>
               )}
             </button>
+
+            {/* Upload Excel Button */}
+            {onNavigateToUpload && (
+              <button
+                onClick={onNavigateToUpload}
+                title="Upload File Excel Material Baru"
+                className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-md text-xs font-semibold shadow-xs transition"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Upload Excel</span>
+              </button>
+            )}
 
             {/* Refresh Button */}
             <button

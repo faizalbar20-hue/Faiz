@@ -41,6 +41,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
   const [orFilter, setOrFilter] = useState<string>('ALL');
   const [unitFilter, setUnitFilter] = useState<string>('ALL');
   const [followUpFilter, setFollowUpFilter] = useState<string>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<string>('ALL');
   const [onlyStale, setOnlyStale] = useState<boolean>(false);
 
   // Sorting & Pagination
@@ -127,6 +128,12 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         if (followUpFilter === 'RESOLVED' && !item.followUp?.isFollowedUp) return false;
         if (followUpFilter === 'UNRESOLVED' && item.followUp?.isFollowedUp) return false;
 
+        // Source Filter (Google Sheets vs Upload Excel)
+        if (sourceFilter !== 'ALL') {
+          const itemSource = item.source || 'GOOGLE_SHEETS';
+          if (itemSource !== sourceFilter) return false;
+        }
+
         // Only Stale Filter
         if (onlyStale && !item.isStale) return false;
 
@@ -153,7 +160,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
         const numB = typeof valB === 'number' && !isNaN(valB) ? valB : 0;
         return sortDirection === 'asc' ? numA - numB : numB - numA;
       });
-  }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, followUpFilter, onlyStale, sortField, sortDirection]);
+  }, [items, searchTerm, dateSearchTerm, statusFilter, riskFilter, orFilter, unitFilter, followUpFilter, sourceFilter, onlyStale, sortField, sortDirection]);
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredItems.length / pageSize) || 1;
@@ -179,6 +186,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
     setOrFilter('ALL');
     setUnitFilter('ALL');
     setFollowUpFilter('ALL');
+    setSourceFilter('ALL');
     setOnlyStale(false);
     setCurrentPage(1);
   };
@@ -324,20 +332,37 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
             >
               <option value="ALL">Semua Status</option>
               <option value="READY">READY (Terpenuhi)</option>
-              <option value="NOT READY">NOT READY (Kurang)</option>
+              <option value="NOT READY">BELUM READY (Kurang)</option>
               <option value="CHECK DATA">CHECK DATA (Anomali)</option>
             </select>
           </div>
 
-          {/* Risk Filter */}
+          {/* Source Filter */}
           <div className="md:col-span-2">
+            <select
+              value={sourceFilter}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full py-2 px-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+              title="Filter Sumber Data"
+            >
+              <option value="ALL">Semua Sumber Data</option>
+              <option value="GOOGLE_SHEETS">Google Sheets</option>
+              <option value="EXCEL_UPLOAD">Upload Excel</option>
+            </select>
+          </div>
+
+          {/* Risk Filter */}
+          <div className="md:col-span-1">
             <select
               value={riskFilter}
               onChange={(e) => {
                 setRiskFilter(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full py-2 px-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full py-2 px-1 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="ALL">Semua Risiko</option>
               <option value="CRITICAL">CRITICAL</option>
@@ -454,6 +479,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
             <thead>
               <tr className="bg-slate-900 text-slate-200 font-semibold border-b border-slate-800">
                 <th className="py-3 px-3 w-12 text-center">Row</th>
+                <th className="py-3 px-2 text-center">Sumber</th>
                 <th
                   onClick={() => handleSort('orNumber')}
                   className="py-3 px-3 cursor-pointer hover:bg-slate-800 transition"
@@ -526,7 +552,7 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
             <tbody className="divide-y divide-slate-200">
               {paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-slate-400">
+                  <td colSpan={13} className="py-12 text-center text-slate-400">
                     Tidak ada material yang cocok dengan kriteria pencarian dan filter.
                   </td>
                 </tr>
@@ -544,6 +570,25 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                       {/* Row index */}
                       <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">
                         #{item.rowIndex}
+                      </td>
+
+                      {/* Source Badge */}
+                      <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                        {item.source === 'EXCEL_UPLOAD' ? (
+                          <span
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            title={`Upload Excel: ${item.uploadFileName || item.orNumber} (${item.dataDate || item.updateDateFormatted})`}
+                          >
+                            Excel
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300"
+                            title="Sumber: Google Sheets (Rekap)"
+                          >
+                            Sheets
+                          </span>
+                        )}
                       </td>
 
                       {/* OR / Style */}
@@ -590,7 +635,23 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
 
                       {/* Shortage / Surplus */}
                       <td className="py-2.5 px-3 text-right">
-                        {hasShortage ? (
+                        {item.kekurangan !== undefined ? (
+                          <span
+                            className={`font-mono font-bold px-1.5 py-0.5 rounded ${
+                              item.kekurangan < 0
+                                ? 'text-red-700 bg-red-50'
+                                : item.kekurangan > 0
+                                ? 'text-blue-700 bg-blue-50 text-[11px]'
+                                : 'text-emerald-700 font-semibold'
+                            }`}
+                          >
+                            {item.kekurangan < 0
+                              ? item.kekurangan.toLocaleString()
+                              : item.kekurangan > 0
+                              ? `+${item.kekurangan.toLocaleString()}`
+                              : '0'}
+                          </span>
+                        ) : hasShortage ? (
                           <span className="font-extrabold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
                             - {item.calculatedShortage.toLocaleString()}
                           </span>
@@ -647,14 +708,11 @@ export const ReadinessView: React.FC<ReadinessViewProps> = ({
                         {item.readinessStatus === 'NOT READY' && (
                           <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
                             <XCircle className="w-3 h-3 text-amber-700" />
-                            <span>NOT READY</span>
+                            <span>BELUM READY</span>
                           </span>
                         )}
                         {item.readinessStatus === 'CHECK DATA' && (
-                          <span
-                            title={item.statusConflictReason}
-                            className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-200"
-                          >
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
                             <AlertTriangle className="w-3 h-3 text-purple-700" />
                             <span>CHECK DATA</span>
                           </span>

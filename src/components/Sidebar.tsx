@@ -8,18 +8,20 @@ import {
   ShieldAlert,
   Info,
   Calendar,
+  Upload,
 } from 'lucide-react';
 import { PpicDashboardKpi } from '../types/ppic';
 
-export type ActiveTab = 'overview' | 'readiness' | 'risk' | 'schedule' | 'sync' | 'settings';
+export type ActiveTab = 'overview' | 'readiness' | 'risk' | 'schedule' | 'upload' | 'sync' | 'settings';
 
 interface SidebarProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   kpi: PpicDashboardKpi;
+  excelBatchCount?: number;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, kpi }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, kpi, excelBatchCount = 0 }) => {
   const navItems = [
     {
       id: 'overview' as ActiveTab,
@@ -35,6 +37,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, kpi })
       icon: Boxes,
       badge: kpi.notReadyRows > 0 ? `${kpi.notReadyRows} Kurang` : null,
       badgeColor: 'bg-amber-100 text-amber-800 border-amber-200',
+    },
+    {
+      id: 'upload' as ActiveTab,
+      label: 'Upload Excel',
+      sublabel: 'Import Data OR & Tgl',
+      icon: Upload,
+      badge: excelBatchCount > 0 ? `${excelBatchCount} Batch` : null,
+      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     },
     {
       id: 'risk' as ActiveTab,

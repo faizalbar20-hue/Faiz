@@ -16,6 +16,7 @@ import {
   SyncLogEntry,
   ProductionSchedule,
   MaterialFollowUp,
+  ExcelUploadBatch,
 } from './types/ppic';
 import {
   calculateDashboardKpi,
@@ -30,6 +31,7 @@ import {
   toggleMaterialFollowUp,
   syncDataToAppsScript,
 } from './services/scheduleAndFollowUpService';
+import { loadAllExcelBatches } from './services/excelStorageService';
 
 import { Navbar } from './components/Navbar';
 import { Sidebar, ActiveTab } from './components/Sidebar';
@@ -37,6 +39,7 @@ import { OverviewView } from './components/OverviewView';
 import { ReadinessView } from './components/ReadinessView';
 import { RiskAnalysisView } from './components/RiskAnalysisView';
 import { ProductionScheduleView } from './components/ProductionScheduleView';
+import { ExcelUploadView } from './components/ExcelUploadView';
 import { SyncStatusView } from './components/SyncStatusView';
 import { SettingsView } from './components/SettingsView';
 import { MaterialDetailModal } from './components/MaterialDetailModal';
@@ -109,6 +112,8 @@ export default function App() {
 
   // Raw items from spreadsheet/demo
   const [rawItems, setRawItems] = useState<ParsedMaterialItem[]>([]);
+  // Persistent Excel Upload batches
+  const [excelBatches, setExcelBatches] = useState<ExcelUploadBatch[]>(() => loadAllExcelBatches());
   // Schedules & Follow-Up persisted state
   const [schedules, setSchedules] = useState<ProductionSchedule[]>(() => loadProductionSchedules());
   const [followUps, setFollowUps] = useState<Record<string, MaterialFollowUp>>(() => loadFollowUps());
@@ -344,18 +349,41 @@ export default function App() {
   }, [settings.autoSyncEnabled, settings.useDemoData, settings.syncIntervalSeconds, syncData]);
 
   // DEDUPLICATED & ENRICHED MATERIAL ITEMS (Requirement 4 & Requirement 3)
-  // Only the most recent valid update for each unique OR + material combination is used.
+  // Integrates Google Sheets (or demo) items + all stored Excel Upload batches
   const items = useMemo(() => {
-    // Step 1: Filter out obsolete updates per OR + Material
-    const latestItems = filterLatestMaterialUpdates(rawItems);
-    // Step 2: Enrich with production schedule, remaining days, and follow-up status
+    // 1. Google Sheets items (tagged with source: 'GOOGLE_SHEETS')
+    const sheetsItems = filterLatestMaterialUpdates(rawItems).map((item) => ({
+      ...item,
+      source: (item.source || 'GOOGLE_SHEETS') as 'GOOGLE_SHEETS' | 'EXCEL_UPLOAD',
+    }));
+
+    // 2. Excel Upload items (from all saved batches)
+    const excelItems = excelBatches.flatMap((b) => b.items || []);
+
+    // 3. Merged unified collection: retains all items from both sources
+    const combined = [...sheetsItems, ...excelItems];
+
+    // 4. Enrich with schedules, days to production, follow-ups, and risk weights
     return enrichItemsWithSchedulesAndFollowUps(
-      latestItems,
+      combined,
       schedules,
       followUps,
       settings.riskWeights
     );
-  }, [rawItems, schedules, followUps, settings.riskWeights]);
+  }, [rawItems, excelBatches, schedules, followUps, settings.riskWeights]);
+
+  const existingOrList = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((i) => {
+      if (i.orNumber && i.orNumber !== '-') set.add(i.orNumber);
+    });
+    return Array.from(set).sort();
+  }, [items]);
+
+  const handleBatchSaved = useCallback(() => {
+    setExcelBatches(loadAllExcelBatches());
+    showToast('Data Excel berhasil disimpan dan disinkronkan ke dashboard!', 'success');
+  }, [showToast]);
 
   // Memoized KPI calculation: Only runs when items array actually changes!
   const kpi: PpicDashboardKpi = useMemo(() => calculateDashboardKpi(items), [items]);
@@ -520,6 +548,7 @@ export default function App() {
         sheetName={settings.sheetName}
         criticalCount={criticalItems.length}
         onOpenCriticalNotifications={() => setIsCriticalModalOpen(true)}
+        onNavigateToUpload={() => setActiveTab('upload')}
       />
 
       {/* Mode Banner */}
@@ -587,8 +616,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Real Data Mode Prompt when no spreadsheet configured */}
-      {!settings.useDemoData && (!settings.spreadsheetId || items.length === 0) && (
+      {/* Real Data Mode Prompt when no spreadsheet configured and no Excel batches exist */}
+      {!settings.useDemoData && !settings.spreadsheetId && excelBatches.length === 0 && (
         <div className="max-w-7xl w-full mx-auto p-4 sm:p-6">
           <div className="bg-white rounded-2xl border border-blue-200 shadow-sm p-6 sm:p-8">
             <div className="flex items-start space-x-4">
@@ -660,7 +689,12 @@ export default function App() {
 
       {/* Main Layout */}
       <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} kpi={kpi} />
+        <Sidebar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          kpi={kpi}
+          excelBatchCount={excelBatches.length}
+        />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0">
           <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Ringkasan Overview">
@@ -682,6 +716,16 @@ export default function App() {
                 staleThresholdDays={settings.staleThresholdDays}
                 onSelectMaterial={setSelectedMaterial}
                 onToggleFollowUp={handleToggleFollowUp}
+              />
+            )}
+          </ErrorBoundary>
+
+          {/* Excel Upload View */}
+          <ErrorBoundary isTabLevel fallbackTitle="Gagal memuat Fitur Upload Excel">
+            {activeTab === 'upload' && (
+              <ExcelUploadView
+                onBatchSaved={handleBatchSaved}
+                existingOrList={existingOrList}
               />
             )}
           </ErrorBoundary>
@@ -726,6 +770,9 @@ export default function App() {
                 onManualRefresh={() => syncData(true)}
                 isDemoMode={settings.useDemoData}
                 detectedHeaders={detectedHeaders}
+                excelBatchesCount={excelBatches.length}
+                excelItemsCount={excelBatches.reduce((acc, b) => acc + (b.items?.length || 0), 0)}
+                onNavigateToUpload={() => setActiveTab('upload')}
               />
             )}
           </ErrorBoundary>

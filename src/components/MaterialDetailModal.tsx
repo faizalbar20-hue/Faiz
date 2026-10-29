@@ -44,6 +44,15 @@ export const MaterialDetailModal: React.FC<MaterialDetailModalProps> = ({
               <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
                 OR: {item.orNumber}
               </span>
+              {item.source === 'EXCEL_UPLOAD' ? (
+                <span className="text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded">
+                  Sumber: Upload Excel
+                </span>
+              ) : (
+                <span className="text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 px-2 py-0.5 rounded">
+                  Sumber: Google Sheets
+                </span>
+              )}
               <span className="text-xs text-slate-300 font-medium">
                 Style: {item.style}
               </span>

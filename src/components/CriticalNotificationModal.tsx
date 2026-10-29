@@ -124,6 +124,15 @@ export const CriticalNotificationModal: React.FC<CriticalNotificationModalProps>
                         <span className="font-mono text-xs font-bold text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded">
                           {item.orNumber}
                         </span>
+                        {item.source === 'EXCEL_UPLOAD' ? (
+                          <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded">
+                            Excel
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300 px-1.5 py-0.5 rounded">
+                            Sheets
+                          </span>
+                        )}
                         <span className="text-xs text-slate-500 font-medium">
                           {item.style}
                         </span>
